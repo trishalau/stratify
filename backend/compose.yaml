@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: stratify
+      POSTGRES_USER: stratify
+      POSTGRES_PASSWORD: local-dev-password
+    ports:
+      - "5432:5432"
+    volumes:
+      - stratify-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stratify -d stratify"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  stratify-postgres:
