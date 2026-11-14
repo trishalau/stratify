@@ -58,6 +58,34 @@ class FinancialEngineTests(unittest.TestCase):
         self.assertEqual(result["estimate"]["expenses"]["rent"], "11000.00")
         self.assertEqual(result["estimate"]["net_profit"], "37000.00")
 
+    def test_expense_change_can_model_confirmed_custom_monthly_variable(self):
+        self.business["custom_monthly_variables"] = [
+            {"name": "Utilities", "value": "2000.00"},
+        ]
+        result = simulate_scenario(
+            self.business,
+            self.scenario(
+                "expense_change",
+                {"expense_category": "custom:Utilities", "expense_change_percent": "25"},
+            ),
+        )
+        self.assertEqual(result["baseline"]["expenses"]["custom:Utilities"], "2000.00")
+        self.assertEqual(result["estimate"]["expenses"]["custom:Utilities"], "2500.00")
+        self.assertEqual(result["baseline"]["total_expenses"], "84000.00")
+        self.assertEqual(result["estimate"]["total_expenses"], "84500.00")
+        self.assertEqual(result["estimate"]["net_profit"], "35500.00")
+
+    def test_custom_expense_not_in_profile_cannot_be_simulated(self):
+        self.business["custom_monthly_variables"] = [{"name": "Utilities", "value": "2000.00"}]
+        with self.assertRaisesRegex(FinancialEngineError, "supported monthly expense category"):
+            simulate_scenario(
+                self.business,
+                self.scenario(
+                    "expense_change",
+                    {"expense_category": "custom:Marketing", "expense_change_percent": "10"},
+                ),
+            )
+
     def test_comparison_range_uses_explicit_alternative_assumptions(self):
         result = simulate_scenario(
             self.business,

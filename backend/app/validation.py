@@ -33,7 +33,7 @@ REQUIRED_BUSINESS_FIELDS = {
     "other_expenses",
     "cash_balance",
 }
-BUSINESS_FIELDS = BUSINESS_STRING_FIELDS | BUSINESS_AMOUNT_FIELDS
+BUSINESS_FIELDS = BUSINESS_STRING_FIELDS | BUSINESS_AMOUNT_FIELDS | {"custom_monthly_variables"}
 SCENARIO_EVENT_TYPES = {
     "supplier_price_increase",
     "sales_decrease",
@@ -92,6 +92,23 @@ def parse_business_payload(data: Any, *, partial: bool = False) -> dict[str, Any
 
     for field in BUSINESS_AMOUNT_FIELDS & set(data):
         result[field] = _parse_amount(data[field], field, nullable=field in {"inventory_value", "liabilities"})
+    if "custom_monthly_variables" in data:
+        variables = data["custom_monthly_variables"]
+        if not isinstance(variables, list):
+            raise RequestValidationError("Custom monthly variables must be a list.")
+        normalized = []
+        names = set()
+        for item in variables:
+            if not isinstance(item, dict) or set(item) != {"name", "value"}:
+                raise RequestValidationError("Each custom variable needs a name and amount.")
+            name = item["name"]
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+                raise RequestValidationError("Variable names must contain 1 to 80 characters.")
+            if name.strip().casefold() in names:
+                raise RequestValidationError("Custom variable names must be unique.")
+            names.add(name.strip().casefold())
+            normalized.append({"name": name.strip(), "value": format(_parse_amount(item["value"], "custom_monthly_variables"), ".2f")})
+        result["custom_monthly_variables"] = normalized
     if not partial:
         result.setdefault("currency", "MYR")
     return result

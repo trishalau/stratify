@@ -112,6 +112,43 @@ class StratifyApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("cash_balance", response.get_json()["fields"])
 
+    def test_custom_monthly_variables_can_be_saved_and_retrieved(self):
+        business = self.create_business()
+        variables = [
+            {"name": "Utilities", "value": "850.5"},
+            {"name": "Marketing", "value": "1200"},
+        ]
+        updated = self.client.patch(
+            f"/api/businesses/{business['id']}",
+            json={"custom_monthly_variables": variables},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.get_json()["data"]["custom_monthly_variables"],
+            [
+                {"name": "Utilities", "value": "850.50"},
+                {"name": "Marketing", "value": "1200.00"},
+            ],
+        )
+
+        retrieved = self.client.get(f"/api/businesses/{business['id']}")
+        self.assertEqual(retrieved.status_code, 200)
+        self.assertEqual(retrieved.get_json()["data"]["custom_monthly_variables"], updated.get_json()["data"]["custom_monthly_variables"])
+
+    def test_custom_monthly_variables_reject_invalid_or_duplicate_entries(self):
+        business = self.create_business()
+        for variables in (
+            [{"name": "Utilities", "value": "-1"}],
+            [{"name": "Utilities", "value": "10"}, {"name": "utilities", "value": "15"}],
+            [{"name": "", "value": "10"}],
+        ):
+            with self.subTest(variables=variables):
+                response = self.client.patch(
+                    f"/api/businesses/{business['id']}",
+                    json={"custom_monthly_variables": variables},
+                )
+                self.assertEqual(response.status_code, 422)
+
     def test_scenario_requires_review_and_confirmation(self):
         business = self.create_business()
         response = self.client.post(

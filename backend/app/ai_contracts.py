@@ -1,6 +1,7 @@
 """Contracts and validation for model output; never used for calculations."""
 
 import re
+from difflib import SequenceMatcher
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -111,6 +112,13 @@ EXPENSE_CATEGORY_ALIASES = {
     "other_expenses": {"other expense", "other expenses", "miscellaneous expense", "miscellaneous expenses"},
 }
 
+EXPENSE_CATEGORY_LABELS = {
+    "supplier_costs": "Supplier costs",
+    "rent": "Rent",
+    "staff_salaries": "Staff salaries",
+    "other_expenses": "Other expenses",
+}
+
 INTERPRETATION_SCHEMA = {
     "type": "object",
     "properties": {
@@ -176,6 +184,34 @@ def _expense_category_in_text(text: str) -> str | None:
     return None
 
 
+def _suggest_expense_category(value: str, quote: str) -> dict[str, str] | None:
+    """Offer a close spelling as a question; never treat it as a confirmed mapping."""
+    candidates = set()
+    # Only suggest text actually written by the user. The model's proposed
+    # category may already be normalized, and must not be presented as a quote.
+    words = re.findall(r"[a-z]+", quote.casefold())
+    for start in range(len(words)):
+        for size in range(1, min(4, len(words) - start) + 1):
+            phrase = " ".join(words[start:start + size])
+            if len(phrase) >= 5:
+                candidates.add(phrase)
+
+    best_by_category: dict[str, tuple[float, str]] = {}
+    for category, aliases in EXPENSE_CATEGORY_ALIASES.items():
+        for candidate in candidates:
+            score = max(SequenceMatcher(None, candidate, alias).ratio() for alias in aliases)
+            if score > best_by_category.get(category, (0, ""))[0]:
+                best_by_category[category] = (score, candidate)
+
+    ranked = sorted(best_by_category.items(), key=lambda item: item[1][0], reverse=True)
+    if not ranked or ranked[0][1][0] < 0.78:
+        return None
+    if len(ranked) > 1 and ranked[0][1][0] - ranked[1][1][0] < 0.07:
+        return None
+    category, (_, mentioned) = ranked[0]
+    return {"category": category, "label": EXPENSE_CATEGORY_LABELS[category], "mentioned": mentioned}
+
+
 class AIOutputValidationError(ValueError):
     """Model output did not satisfy application-level business rules."""
 
@@ -226,7 +262,7 @@ def _required_assumptions(event_type: str) -> tuple[set[str], list[str]]:
     return set(), ["What business change and measurable assumption would you like to explore?"]
 
 
-def validate_interpretation(raw: Any, user_text: str) -> dict[str, Any]:
+def validate_interpretation(raw: Any, user_text: str, custom_expense_names: list[str] | None = None) -> dict[str, Any]:
     required_keys = {"event_type", "title", "summary", "affected_variables", "assumptions", "missing_information", "follow_up_questions"}
     if not isinstance(raw, dict) or set(raw) != required_keys:
         raise AIOutputValidationError("The model returned an invalid interpretation structure.")
@@ -258,6 +294,7 @@ def validate_interpretation(raw: Any, user_text: str) -> dict[str, Any]:
     evidence: dict[str, str] = {}
     range_questions: list[str] = []
     category_questions: list[str] = []
+    category_suggestions: list[dict[str, str]] = []
     unit_questions: list[str] = []
     for candidate in candidates:
         candidate_keys = {"name", "value", "unit", "evidence"}
@@ -287,21 +324,40 @@ def validate_interpretation(raw: Any, user_text: str) -> dict[str, Any]:
             if not isinstance(value, str):
                 raise AIOutputValidationError("Expense category must be text.")
             detected_category = _expense_category_in_text(quote)
+            custom_match = next((name for name in (custom_expense_names or []) if name.casefold() in quote.casefold()), None)
             proposed_category = value if value in EXPENSE_CATEGORIES else _expense_category_in_text(value)
+            if custom_match and (value.casefold() == custom_match.casefold() or value == f"custom:{custom_match}"):
+                assumptions[name] = f"custom:{custom_match}"
+                evidence[name] = quote.strip()
+                continue
             category_is_evidenced = (
                 value.casefold() in quote.casefold()
                 or value.replace("_", " ").casefold() in quote.casefold()
                 or (detected_category is not None and proposed_category == detected_category)
             )
             if not category_is_evidenced:
-                category_questions.append(
-                    "I could not match that expense to the user's wording. Which saved expense line should represent it: supplier costs, rent, staff salaries, or other expenses?"
-                )
+                suggestion = _suggest_expense_category(value, quote)
+                if suggestion:
+                    category_suggestions.append(suggestion)
+                    category_questions.append(
+                        f"You wrote ‘{suggestion['mentioned']}’. Did you mean {suggestion['label']}? Reply yes to confirm, or choose another saved expense line."
+                    )
+                else:
+                    category_questions.append(
+                        "I could not match that expense to the user's wording. Which saved expense line should represent it: supplier costs, rent, staff salaries, or other expenses?"
+                    )
                 continue
             if detected_category is None or proposed_category != detected_category:
-                category_questions.append(
-                    "That expense category is not modeled as a separate line yet. Which saved expense line should represent it: supplier costs, rent, staff salaries, or other expenses? Stratify will not choose one automatically."
-                )
+                suggestion = _suggest_expense_category(value, quote)
+                if suggestion:
+                    category_suggestions.append(suggestion)
+                    category_questions.append(
+                        f"You wrote ‘{suggestion['mentioned']}’. Did you mean {suggestion['label']}? Reply yes to confirm, or choose another saved expense line."
+                    )
+                else:
+                    category_questions.append(
+                        "That expense category is not modeled as a separate line yet. Which saved expense line should represent it: supplier costs, rent, staff salaries, or other expenses? Stratify will not choose one automatically."
+                    )
                 continue
             value = detected_category
         else:
@@ -404,10 +460,7 @@ def validate_interpretation(raw: Any, user_text: str) -> dict[str, Any]:
     return {
         "event_type": event_type,
         "title": title.strip(),
-        "summary": (
-            "I couldn't safely match that expense to a saved expense line. Please choose which existing line should represent it."
-            if category_questions else summary.strip()
-        ),
+        "summary": ("I couldn't safely match that expense to a saved expense line. Please clarify before continuing." if category_questions else summary.strip()),
         "affected_variables": affected,
         "assumptions": assumptions,
         "assumption_evidence": evidence,
@@ -416,6 +469,7 @@ def validate_interpretation(raw: Any, user_text: str) -> dict[str, Any]:
         "simulation_supported": simulation_supported,
         "ready_for_confirmation": ready,
         "clarification_only": False,
+        "expense_category_suggestion": category_suggestions[0] if category_suggestions else None,
     }
 
 

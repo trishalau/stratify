@@ -36,6 +36,7 @@ class Business(Base):
     cash_balance: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
     inventory_value: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
     liabilities: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    custom_monthly_variables: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 

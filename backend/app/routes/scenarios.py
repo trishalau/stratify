@@ -75,11 +75,12 @@ def interpret_scenario(business_id: int):
         return jsonify({"error": "Business not found."}), 404
     messages, user_text = _parse_chat_messages(request.get_json(silent=True))
     profile = business_to_dict(business)
-    available_fields = [name for name, value in profile.items() if value is not None and name not in {"id", "created_at", "updated_at"}]
+    custom_names = [item["name"] for item in profile.get("custom_monthly_variables", [])]
+    available_fields = [name for name, value in profile.items() if value is not None and name not in {"id", "created_at", "updated_at"}] + custom_names
 
     try:
         raw = current_app.extensions["scenario_ai"].interpret(messages, available_fields)
-        result = validate_interpretation(raw, user_text)
+        result = validate_interpretation(raw, user_text, custom_names)
     except AIConfigurationError as error:
         return jsonify({"error": str(error)}), 503
     except AIIntegrationError as error:

@@ -84,6 +84,17 @@ def _profile_values(business: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(currency, str) or len(currency) != 3 or not currency.isascii() or not currency.isalpha():
         raise FinancialEngineError("Business currency must be a three-letter code.", "currency")
     values["currency"] = currency.upper()
+    custom = business.get("custom_monthly_variables", [])
+    if not isinstance(custom, list):
+        raise FinancialEngineError("Custom monthly variables must be a list.", "custom_monthly_variables")
+    values["custom_expenses"] = {}
+    for item in custom:
+        if not isinstance(item, Mapping) or not isinstance(item.get("name"), str):
+            raise FinancialEngineError("A custom monthly variable is malformed.", "custom_monthly_variables")
+        name = item["name"].strip()
+        if not name or name in values["custom_expenses"]:
+            raise FinancialEngineError("Custom monthly variable names must be unique.", "custom_monthly_variables")
+        values["custom_expenses"][name] = _money(item.get("value"), "custom_monthly_variables")
     return values
 
 
@@ -118,6 +129,7 @@ def _calculate_case(
 ) -> dict[str, Any]:
     revenue = profile["monthly_revenue"]
     expenses = {category: profile[category] for category in EXPENSE_CATEGORIES}
+    expenses.update({f"custom:{name}": amount for name, amount in profile["custom_expenses"].items()})
 
     if event_type == "sales_decrease":
         revenue = revenue * (Decimal("1") - percentage / HUNDRED)
@@ -165,7 +177,8 @@ def simulate_scenario(business: Mapping[str, Any], scenario: Mapping[str, Any]) 
     expense_category = None
     if event_type == "expense_change":
         expense_category = assumptions.get("expense_category")
-        if expense_category not in spec["categories"]:
+        supported_categories = (*spec["categories"], *(f"custom:{name}" for name in _profile_values(business)["custom_expenses"]))
+        if expense_category not in supported_categories:
             raise FinancialEngineError("Choose a supported monthly expense category.", "expense_category")
 
     primary = _percentage(
@@ -178,6 +191,7 @@ def simulate_scenario(business: Mapping[str, Any], scenario: Mapping[str, Any]) 
 
     profile = _profile_values(business)
     baseline_expenses = {category: profile[category] for category in EXPENSE_CATEGORIES}
+    baseline_expenses.update({f"custom:{name}": value for name, value in profile["custom_expenses"].items()})
     baseline = _position(profile["monthly_revenue"], baseline_expenses, profile["currency"])
     central = _calculate_case(profile, event_type, primary, expense_category)
     optimistic = None

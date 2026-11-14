@@ -186,6 +186,57 @@ class AIContractTests(unittest.TestCase):
         self.assertFalse(result["ready_for_confirmation"])
         self.assertTrue(any("Which saved expense line" in item for item in result["follow_up_questions"]))
 
+    def test_saved_custom_expense_name_is_accepted_only_when_exactly_present(self):
+        raw = self.interpretation(
+            event_type="expense_change",
+            affected_variables=["other_expenses"],
+            assumptions=[
+                {"name": "expense_category", "value": "custom:Utilities", "unit": "category", "evidence": "utilities"},
+                {"name": "expense_change_percent", "value": 25, "unit": "percent", "evidence": "25%"},
+            ],
+        )
+        result = validate_interpretation(raw, "Utilities increase by 25%.", ["Utilities"])
+        self.assertEqual(result["assumptions"]["expense_category"], "custom:Utilities")
+        self.assertTrue(result["ready_for_confirmation"])
+
+        rejected = validate_interpretation(raw, "Utilities increase by 25%.", ["Utilities budget"])
+        self.assertNotIn("expense_category", rejected["assumptions"])
+        self.assertFalse(rejected["ready_for_confirmation"])
+
+    def test_close_expense_typo_requires_explicit_confirmation(self):
+        raw = self.interpretation(
+            event_type="expense_change",
+            affected_variables=["supplier_costs"],
+            assumptions=[
+                {"name": "expense_category", "value": "supplier_costs", "unit": "category", "evidence": "supply costs"},
+                {"name": "expense_change_percent", "value": 20, "unit": "percent", "evidence": "20%"},
+            ],
+        )
+        first_turn = "Supply costs increase by 20%."
+        result = validate_interpretation(raw, first_turn)
+
+        self.assertNotIn("expense_category", result["assumptions"])
+        self.assertFalse(result["ready_for_confirmation"])
+        self.assertEqual(result["expense_category_suggestion"], {
+            "category": "supplier_costs",
+            "label": "Supplier costs",
+            "mentioned": "supply costs",
+        })
+        self.assertTrue(any("Did you mean Supplier costs?" in item for item in result["follow_up_questions"]))
+
+        confirmed_raw = self.interpretation(
+            event_type="expense_change",
+            affected_variables=["supplier_costs"],
+            assumptions=[
+                {"name": "expense_category", "value": "supplier_costs", "unit": "category", "evidence": "Supplier costs"},
+                {"name": "expense_change_percent", "value": 20, "unit": "percent", "evidence": "20%"},
+            ],
+        )
+        confirmed_text = f"{first_turn}\nYes, I meant Supplier costs. Use that saved expense line."
+        confirmed = validate_interpretation(confirmed_raw, confirmed_text)
+        self.assertEqual(confirmed["assumptions"]["expense_category"], "supplier_costs")
+        self.assertTrue(confirmed["ready_for_confirmation"])
+
     def test_explanation_is_qualitative_and_cannot_repeat_numbers(self):
         valid = {
             "summary": "Higher supplier costs reduce the estimated monthly profit.",

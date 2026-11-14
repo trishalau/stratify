@@ -291,6 +291,52 @@ a { color: inherit; text-decoration: none; }
 .interpretation-assumptions > div span { color: #78837b; font-size: 8px; text-transform: capitalize; }
 .interpretation-assumptions > div b { color: #405148; font-size: 9px; }
 .interpretation-assumptions > div small { grid-column: 1 / -1; color: #9aa39c; font-size: 8px; }
+.monthly-variables-panel, .expense-mapping-panel { margin-top: 10px; padding: 11px; border: 1px solid #e8ede7; border-radius: 7px; background: #fbfcfa; }
+.monthly-variables-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.monthly-variables-heading > div { display: grid; gap: 4px; }
+.monthly-variables-heading strong, .expense-mapping-panel > div:first-child strong { color: #58675d; font-size: 9px; font-weight: 620; }
+.monthly-variables-heading small, .expense-mapping-panel > div:first-child p { color: #929c94; font-size: 8px; line-height: 1.45; }
+.monthly-variables-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 9px; }
+.monthly-variable-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 7px 8px; border: 1px solid #eef1ed; border-radius: 5px; background: white; }
+.monthly-variable-row > div { display: grid; gap: 3px; min-width: 0; }
+.monthly-variable-row strong { color: #66736a; font-size: 8px; font-weight: 580; }
+.monthly-variable-row small { color: #9aa39c; font-size: 7px; line-height: 1.35; }
+.monthly-variable-row > b { color: #536158; font-size: 8px; font-weight: 580; text-align: right; white-space: nowrap; }
+.monthly-variables-note { margin-top: 8px; color: #929c94; font-size: 7px; line-height: 1.45; }
+.add-variable-options { display: grid; gap: 5px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #e9ede8; }
+.add-variable-options > strong { color: #768279; font-size: 8px; }
+.add-variable-options button { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border: 1px solid #e9ede8; border-radius: 5px; color: #647168; background: white; text-align: left; cursor: pointer; }
+.add-variable-options button:hover { border-color: #9bb4a0; background: #f7faf6; }
+.add-variable-options button span { font-size: 8px; font-weight: 580; }
+.add-variable-options button small { color: #9aa39c; font-size: 7px; }
+.add-financial-variable { position: relative; margin-top: 12px; }
+.add-financial-variable .add-variable-options { max-width: 420px; }
+.custom-monthly-form { display: grid; gap: 9px; margin-top: 16px; padding-top: 13px; border-top: 1px solid #edf0eb; }
+.custom-monthly-title { display: grid; gap: 4px; }
+.custom-monthly-title strong { color: #46534b; font-size: 11px; font-weight: 620; }
+.custom-monthly-title small, .custom-monthly-form > small { color: #929c94; font-size: 9px; line-height: 1.5; }
+.custom-monthly-box { display: grid; gap: 10px; padding: 11px; border: 1px solid #e8ede7; border-radius: 7px; background: #fbfcfa; }
+.custom-monthly-box-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.custom-monthly-box-head strong { color: #58675d; font-size: 10px; font-weight: 610; }
+.custom-monthly-row, .custom-monthly-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 10px; }
+.category-suggestion-panel { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 11px; padding: 10px; border: 1px solid #dce9dc; border-radius: 7px; background: #f5faf4; }
+.category-suggestion-panel > div { display: grid; gap: 4px; }
+.category-suggestion-panel strong { color: #4d6f55; font-size: 9px; font-weight: 620; }
+.category-suggestion-panel p { color: #7f8f80; font-size: 8px; line-height: 1.45; }
+.expense-mapping-panel > div:first-child p { margin-top: 4px; }
+.expense-option-list { display: grid; gap: 5px; margin-top: 9px; }
+.expense-option { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e9ede8; border-radius: 5px; background: #fff; cursor: pointer; }
+.expense-option-selected { border-color: #81a68c; background: #f6faf6; }
+.expense-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.expense-option-check { display: grid; place-items: center; flex: 0 0 15px; height: 15px; border: 1px solid #dbe2dc; border-radius: 50%; color: transparent; background: white; }
+.expense-option input:checked + .expense-option-check { border-color: #58876a; color: white; background: #58876a; }
+.expense-option input:focus-visible + .expense-option-check { outline: 3px solid #76a58a45; }
+.expense-option-copy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.expense-option-copy strong { color: #59665d; font-size: 8px; font-weight: 600; }
+.expense-option-copy small { color: #9aa39c; font-size: 7px; }
+.expense-option > b { color: #657268; font-size: 8px; font-weight: 570; white-space: nowrap; }
+.expense-mapping-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
+.expense-mapping-action small { max-width: 260px; color: #929c94; font-size: 7px; line-height: 1.4; }
 .interpretation-confirm { margin-top: 11px; padding: 9px; border: 1px solid #e8ece7; border-radius: 6px; }
 .interpretation-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: #89948c; font-size: 8px; }
 .spin-icon { animation: spin 1s linear infinite; }
@@ -504,6 +550,8 @@ a { color: inherit; text-decoration: none; }
   .lower-grid { gap: 10px; }
   .quick-card { min-height: 170px; }
   .field-grid { grid-template-columns: 1fr; }
+  .custom-monthly-row, .custom-monthly-add { grid-template-columns: 1fr; }
+  .custom-monthly-row > .button, .custom-monthly-add > .button { justify-self: end; }
   .two-cols { grid-template-columns: 1fr 1fr; }
   .business-aside { grid-template-columns: 1fr; }
   .event-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -513,6 +561,9 @@ a { color: inherit; text-decoration: none; }
   .simulator-card { padding-inline: 13px; }
   .simulator-aside { grid-template-columns: 1fr; }
   .sim-section-heading h2 { font-size: 13px; }
+  .monthly-variables-grid { grid-template-columns: 1fr; }
+  .expense-mapping-action { align-items: flex-start; flex-direction: column; }
+  .expense-mapping-action .button { align-self: flex-end; }
   .result-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .result-stat { padding: 11px; }
   .result-stat > strong { font-size: 17px; }

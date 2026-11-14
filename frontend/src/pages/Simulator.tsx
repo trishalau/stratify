@@ -17,6 +17,22 @@ const templates: Record<string, { assumptionLabel: string; assumption: string; s
   branch: { assumptionLabel: 'Estimated monthly branch cost', assumption: '', prefix: 'RM', missingInfo: true, description: 'Branch setup and operating cost details are not available.' },
 }
 
+const monthlyVariableCatalog = [
+  { key: 'monthly_revenue', label: 'Monthly revenue', profileKey: 'monthly_revenue' as const, coverage: 'Sales-decrease scenarios' },
+  { key: 'supplier_costs', label: 'Supplier costs', profileKey: 'supplier_costs' as const, coverage: 'Supplier and expense-change scenarios' },
+  { key: 'rent', label: 'Rent', profileKey: 'rent' as const, coverage: 'Expense-change scenarios' },
+  { key: 'staff_salaries', label: 'Staff salaries', profileKey: 'staff_salaries' as const, coverage: 'Expense-change scenarios' },
+  { key: 'other_expenses', label: 'Other expenses', profileKey: 'other_expenses' as const, coverage: 'Expense-change scenarios' },
+  { key: 'cash_balance', label: 'Cash balance', profileKey: 'cash_balance' as const, coverage: 'Current balance only; cash-flow projection unavailable' },
+]
+
+const baseExpenseOptions = [
+  { key: 'supplier_costs', label: 'Supplier costs', profileKey: 'supplier_costs' as const, description: 'Products and materials bought from suppliers.' },
+  { key: 'rent', label: 'Rent', profileKey: 'rent' as const, description: 'Premises or equipment rent.' },
+  { key: 'staff_salaries', label: 'Staff salaries', profileKey: 'staff_salaries' as const, description: 'Payroll, salaries, and wages.' },
+  { key: 'other_expenses', label: 'Other expenses', profileKey: 'other_expenses' as const, description: 'Other operating expenses saved in the business profile.' },
+]
+
 export default function Simulator() {
   const [selected, setSelected] = useState('supplier')
   const [step, setStep] = useState<'choose' | 'assumptions'>('choose')
@@ -29,11 +45,13 @@ export default function Simulator() {
   const [apiError, setApiError] = useState('')
   const [busy, setBusy] = useState(false)
   const [interpretationConfirmed, setInterpretationConfirmed] = useState(false)
+  const [expenseMapping, setExpenseMapping] = useState('')
   const navigate = useNavigate()
   const profile = getBusinessProfile()
   const active = scenarios.find((scenario) => scenario.id === selected) ?? scenarios[0]
   const activeTemplate = templates[selected]
   const Icon = icons[active.icon as keyof typeof icons] ?? Activity
+  const visibleMonthlyVariables = monthlyVariableCatalog
 
   useEffect(() => {
     listBusinesses()
@@ -54,6 +72,7 @@ export default function Simulator() {
     setCustomEvent('')
     setInterpretation(null)
     setInterpretationConfirmed(false)
+    setExpenseMapping('')
     setApiError('')
     setBusy(true)
     try {
@@ -66,6 +85,39 @@ export default function Simulator() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const submitClarification = async (message: string) => {
+    if (!business || busy) return
+    const updatedMessages: ChatMessage[] = [
+      ...chatMessages,
+      { role: 'user', content: message },
+    ]
+    setChatMessages(updatedMessages)
+    setInterpretation(null)
+    setInterpretationConfirmed(false)
+    setApiError('')
+    setBusy(true)
+    try {
+      const result = await interpretScenario(business.id, updatedMessages)
+      setInterpretation(result)
+      const assistantText = [result.summary, ...result.follow_up_questions].join('\n')
+      setChatMessages([...updatedMessages, { role: 'assistant', content: assistantText }])
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Could not clarify the expense line.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const useExpenseMapping = () => {
+    const option = [...baseExpenseOptions, ...(business?.custom_monthly_variables ?? []).map((item) => ({ key: `custom:${item.name}`, label: item.name }))].find((item) => item.key === expenseMapping)
+    if (option) void submitClarification(`For this expense change, use the saved expense line "${option.label}".`)
+  }
+
+  const confirmCategorySuggestion = () => {
+    const suggestion = interpretation?.expense_category_suggestion
+    if (suggestion) void submitClarification(`Yes, I meant ${suggestion.label}. Use that saved expense line for this change.`)
   }
 
   const runConfirmedScenario = async () => {
@@ -115,11 +167,35 @@ export default function Simulator() {
             })}</div>
             <div className="custom-event-box"><div className="custom-event-icon"><MessageSquareText size={16} /></div><div className="custom-event-content"><strong>Describe a custom event</strong><p>Use your own words. Stratify will ask when it needs a clearer detail.</p>
               <details className="ai-guidance"><summary>How to describe an event</summary><div><p>Helpful details include what changes, which business item is affected, and the percentage or amount if you know it. Write figures with digits and units, such as 20% or RM 10,000. You don't need to use special commands; if a detail is unknown, say so.</p><p>For expense changes, saved lines are <b>supplier costs</b>, <b>rent</b>, <b>staff salaries</b>, and <b>other expenses</b>. If you mention another item, such as marketing or utilities, Stratify will ask which saved line to use.</p><small>Examples: “Supplier costs increase by 20%”; “Payroll drops by 10%”; “Monthly sales decrease by 15%”.</small></div></details>
+              <div className="monthly-variables-panel">
+                <div className="monthly-variables-heading">
+                  <div>
+                    <strong>Monthly financial variables</strong>
+                    <small>These profile values can be referenced in scenario descriptions.</small>
+                  </div>
+                </div>
+                <div className="monthly-variables-grid">
+                  {visibleMonthlyVariables.map((variable) => {
+                    const value = business?.[variable.profileKey] ?? null
+                    return <div className="monthly-variable-row" key={variable.key}>
+                      <div><strong>{variable.label}</strong><small>{variable.coverage}</small></div>
+                      <b>{value === null ? 'Not recorded' : `${business?.currency ?? 'MYR'} ${Number(value).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</b>
+                    </div>
+                  })}
+                  {(business?.custom_monthly_variables ?? []).map((variable, index) => <div className="monthly-variable-row optional-variable-row" key={`${variable.name}-${index}`}>
+                    <div><strong>{variable.name}</strong><small>Custom profile value · context only, not calculated</small></div>
+                    <b>{business?.currency ?? 'MYR'} {Number(variable.value).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
+                  </div>)}
+                </div>
+                <p className="monthly-variables-note">The engine currently calculates changes to revenue, supplier costs, rent, salaries, and other expenses. Cash balance, inventory, and liabilities are context only and are not projected.</p>
+              </div>
               {chatMessages.length > 0 && <div className="scenario-chat" aria-live="polite">{chatMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`scenario-chat-message ${message.role}`}><span>{message.role === 'user' ? 'You' : 'Stratify'}</span><p>{message.content}</p></div>)}</div>}
               <form onSubmit={reviewCustomEvent}><textarea value={customEvent} onChange={(event) => setCustomEvent(event.target.value)} placeholder="e.g. Our supplier costs will increase by 20% next month…" rows={3} /><div className="custom-event-bottom"><span><Sparkles size={13} /> {business ? `Using ${business.name}` : 'Connecting to your saved business…'}</span><Button type="submit" variant="secondary" size="sm" disabled={!customEvent.trim() || !business || busy}>{busy ? <><LoaderCircle className="spin-icon" size={14} /> Working…</> : <>Review event <ArrowRight size={14} /></>}</Button></div></form>
               {apiError && <div className="inline-error" role="alert">{apiError}</div>}
                 {interpretation && <div className="interpretation-panel"><div className="interpretation-heading"><div><span className="eyebrow">AI INTERPRETATION · REVIEW REQUIRED</span><h3>{interpretation.title}</h3></div><span className={interpretation.simulation_supported && interpretation.missing_information.length === 0 ? 'support-badge' : 'unsupported-badge'}>{interpretation.missing_information.length > 0 ? 'Needs clarification' : interpretation.simulation_supported ? 'Calculation available' : 'Clarification only'}</span></div><p>{interpretation.summary}</p>
                 {Object.keys(interpretation.assumptions).length > 0 && <div className="interpretation-assumptions"><strong>Proposed assumptions</strong>{Object.entries(interpretation.assumptions).map(([name, value]) => <div key={name}><span>{name.replaceAll('_', ' ')}</span><b>{String(value)}{name.endsWith('_percent') ? '%' : ''}</b><small>Evidence: “{interpretation.assumption_evidence[name]}”</small></div>)}</div>}
+                {interpretation.expense_category_suggestion && <div className="category-suggestion-panel"><div><strong>Did you mean {interpretation.expense_category_suggestion.label}?</strong><p>You wrote “{interpretation.expense_category_suggestion.mentioned}”. Confirming will use the saved {interpretation.expense_category_suggestion.label.toLowerCase()} line.</p></div><Button size="sm" variant="secondary" disabled={busy} onClick={confirmCategorySuggestion}>Yes, use {interpretation.expense_category_suggestion.label} <Check size={13} /></Button></div>}
+                {interpretation.event_type === 'expense_change' && !('expense_category' in interpretation.assumptions) && <div className="expense-mapping-panel"><div><strong>Choose which saved expense line to use</strong><p>Select a built-in expense or one of your custom monthly variables. Revenue has its own event; cash, inventory, and liabilities are not calculated as expenses.</p></div><div className="expense-option-list">{[...baseExpenseOptions.map((option) => ({ ...option, value: business?.[option.profileKey] ?? '0' })), ...(business?.custom_monthly_variables ?? []).map((item) => ({ key: `custom:${item.name}`, label: item.name, description: 'Custom monthly expense from your business profile.', value: item.value }))].map((option) => <label className={`expense-option ${expenseMapping === option.key ? 'expense-option-selected' : ''}`} key={option.key}><input type="radio" name="expense-mapping" value={option.key} checked={expenseMapping === option.key} onChange={() => setExpenseMapping(option.key)} /><span className="expense-option-check"><Check size={12} /></span><span className="expense-option-copy"><strong>{option.label}</strong><small>{option.description}</small></span><b>{business ? `${business.currency} ${Number(option.value).toLocaleString('en-MY')}` : '—'}</b></label>)}</div><div className="expense-mapping-action"><small>This choice is sent back as your clarification. You will review the resulting assumptions before any calculation.</small><Button size="sm" variant="secondary" disabled={!expenseMapping || busy} onClick={useExpenseMapping}>{busy ? 'Clarifying…' : 'Use selected line'} <ArrowRight size={14} /></Button></div></div>}
                 {interpretation.missing_information.length > 0 && <div className="inline-notice"><strong>Information needed</strong><ul>{interpretation.missing_information.map((item) => <li key={item}>{item}</li>)}</ul></div>}
                 {!interpretation.simulation_supported && !interpretation.clarification_only && <div className="inline-notice">This event is understood, but the deterministic engine does not yet calculate it. No financial result will be generated.</div>}
                 {interpretation.ready_for_confirmation && interpretation.simulation_supported && <label className="check-row interpretation-confirm"><input type="checkbox" checked={interpretationConfirmed} onChange={(event) => setInterpretationConfirmed(event.target.checked)} /><span className="custom-check"><Check size={12} /></span><span><strong>I reviewed and confirm these assumptions</strong><small>Stratify will save this scenario and run its deterministic monthly calculation.</small></span></label>}

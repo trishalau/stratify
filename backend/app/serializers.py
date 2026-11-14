@@ -23,6 +23,7 @@ def business_to_dict(business: Business) -> dict[str, Any]:
         "cash_balance": _amount(business.cash_balance),
         "inventory_value": _amount(business.inventory_value),
         "liabilities": _amount(business.liabilities),
+        "custom_monthly_variables": business.custom_monthly_variables or [],
         "created_at": business.created_at.isoformat(),
         "updated_at": business.updated_at.isoformat(),
     }

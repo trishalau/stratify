@@ -1,6 +1,8 @@
 export type Business = {
   id: number
   name: string
+  industry: string
+  location: string
   currency: string
   monthly_revenue: string
   supplier_costs: string
@@ -8,6 +10,9 @@ export type Business = {
   staff_salaries: string
   other_expenses: string
   cash_balance: string
+  inventory_value: string | null
+  liabilities: string | null
+  custom_monthly_variables: { name: string; value: string }[]
 }
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string }
@@ -24,6 +29,7 @@ export type ScenarioInterpretation = {
   simulation_supported: boolean
   ready_for_confirmation: boolean
   clarification_only?: boolean
+  expense_category_suggestion?: { category: string; label: string; mentioned: string } | null
 }
 
 export type FinancialPosition = {
@@ -97,6 +103,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const listBusinesses = () => request<Business[]>('/api/businesses')
+
+export const updateBusiness = (businessId: number, changes: Partial<Omit<Business, 'id'>>) =>
+  request<Business>(`/api/businesses/${businessId}`, {
+    method: 'PATCH', body: JSON.stringify(changes),
+  })
 
 export const listScenarios = (businessId: number) =>
   request<SavedScenario[]>(`/api/businesses/${businessId}/scenarios`)
