@@ -4,12 +4,71 @@ from app import create_app
 from app.database import Base, get_engine
 
 
+class FakeScenarioAI:
+    def interpret(self, messages, available_profile_fields):
+        latest = messages[-1]["content"]
+        if "marketing costs" in latest.casefold():
+            return {
+                "event_type": "expense_change",
+                "title": "Marketing costs increase",
+                "summary": "You described an expense increase.",
+                "affected_variables": ["other_expenses"],
+                "assumptions": [
+                    {"name": "expense_category", "value": "marketing", "unit": "category", "evidence": "marketing"},
+                    {"name": "expense_change_percent", "value": 10, "unit": "percent", "evidence": "10%"},
+                ],
+                "missing_information": [],
+                "follow_up_questions": [],
+            }
+        if "untrusted test output" in latest:
+            return {
+                "event_type": "supplier_price_increase",
+                "title": "Supplier price increase",
+                "summary": "Costs change by 90%.",
+                "affected_variables": ["supplier_costs"],
+                "assumptions": [{
+                    "name": "supplier_cost_increase_percent",
+                    "value": 90,
+                    "unit": "percent",
+                    "evidence": "90%",
+                }],
+                "missing_information": [],
+                "follow_up_questions": [],
+            }
+        return {
+            "event_type": "supplier_price_increase",
+            "title": "Supplier prices rise",
+            "summary": "You described a supplier price increase.",
+            "affected_variables": ["supplier_costs"],
+            "assumptions": [{
+                "name": "supplier_cost_increase_percent",
+                "value": 20,
+                "unit": "percent",
+                "evidence": "20%",
+            }],
+            "missing_information": [],
+            "follow_up_questions": [],
+        }
+
+    def explain(self, calculation):
+        return {
+            "summary": "Higher supplier costs reduce estimated monthly profit.",
+            "drivers": [
+                {"metric": "expenses", "direction": "positive", "explanation": "The supplier expense line increases."},
+                {"metric": "profit", "direction": "negative", "explanation": "The increased expense lowers profit."},
+                {"metric": "cash_flow", "direction": "unavailable", "explanation": "Cash flow cannot be projected from current timing information."},
+            ],
+            "limitations": ["This is a hypothetical estimate based on confirmed assumptions."],
+        }
+
+
 class StratifyApiTests(unittest.TestCase):
     def setUp(self):
         self.app = create_app(
             {
                 "TESTING": True,
                 "DATABASE_URL": "sqlite+pysqlite:///:memory:",
+                "SCENARIO_AI": FakeScenarioAI(),
             }
         )
         Base.metadata.create_all(get_engine(self.app))
@@ -123,6 +182,63 @@ class StratifyApiTests(unittest.TestCase):
         result = self.client.post(f"/api/scenarios/{scenario_id}/simulate")
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.get_json()["data"]["estimate"]["net_profit"], "30000.00")
+
+    def test_interpretation_returns_validated_assumptions_and_never_calculates(self):
+        business = self.create_business()
+        response = self.client.post(
+            f"/api/businesses/{business['id']}/scenarios/interpret",
+            json={"messages": [{"role": "user", "content": "Supplier prices rise by 20%."}]},
+        )
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()["data"]
+        self.assertEqual(result["assumptions"]["supplier_cost_increase_percent"], "20")
+        self.assertEqual(result["assumption_evidence"]["supplier_cost_increase_percent"], "20%")
+        self.assertTrue(result["ready_for_confirmation"])
+        self.assertNotIn("estimate", result)
+
+    def test_invalid_model_output_returns_conversational_clarification(self):
+        business = self.create_business()
+        response = self.client.post(
+            f"/api/businesses/{business['id']}/scenarios/interpret",
+            json={"messages": [{"role": "user", "content": "untrusted test output"}]},
+        )
+        self.assertEqual(response.status_code, 200)
+        interpretation = response.get_json()["data"]
+        self.assertTrue(interpretation["clarification_only"])
+        self.assertFalse(interpretation["ready_for_confirmation"])
+        self.assertEqual(interpretation["assumptions"], {})
+
+    def test_unmodeled_expense_category_returns_question_not_rejection(self):
+        business = self.create_business()
+        response = self.client.post(
+            f"/api/businesses/{business['id']}/scenarios/interpret",
+            json={"messages": [{"role": "user", "content": "Marketing costs rise by 10%."}]},
+        )
+        self.assertEqual(response.status_code, 200)
+        interpretation = response.get_json()["data"]
+        self.assertFalse(interpretation["ready_for_confirmation"])
+        self.assertNotIn("expense_category", interpretation["assumptions"])
+        self.assertTrue(any("Which saved expense line" in item for item in interpretation["follow_up_questions"]))
+
+    def test_explanation_requires_confirmation_and_preserves_engine_result(self):
+        business = self.create_business()
+        draft = self.client.post(
+            f"/api/businesses/{business['id']}/scenarios",
+            json={
+                "title": "Supplier prices rise by 20%",
+                "event_type": "supplier_price_increase",
+                "assumptions": {"supplier_cost_increase_percent": 20},
+            },
+        ).get_json()["data"]
+        blocked = self.client.post(f"/api/scenarios/{draft['id']}/explain")
+        self.assertEqual(blocked.status_code, 409)
+
+        self.client.post(f"/api/scenarios/{draft['id']}/confirm", json={"confirmed": True})
+        explained = self.client.post(f"/api/scenarios/{draft['id']}/explain")
+        self.assertEqual(explained.status_code, 200)
+        payload = explained.get_json()["data"]
+        self.assertEqual(payload["calculation"]["estimate"]["net_profit"], "30000.00")
+        self.assertEqual(payload["explanation"]["summary"], "Higher supplier costs reduce estimated monthly profit.")
 
 
 if __name__ == "__main__":

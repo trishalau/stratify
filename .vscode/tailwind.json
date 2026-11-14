@@ -1,0 +1,49 @@
+{
+  "version": 1.1,
+  "atDirectives": [
+    {
+      "name": "@theme",
+      "description": "Defines Tailwind CSS theme variables."
+    },
+    {
+      "name": "@source",
+      "description": "Registers additional source paths that Tailwind scans for class names."
+    },
+    {
+      "name": "@utility",
+      "description": "Defines a custom Tailwind CSS utility."
+    },
+    {
+      "name": "@variant",
+      "description": "Defines a custom Tailwind CSS variant."
+    },
+    {
+      "name": "@custom-variant",
+      "description": "Defines a custom Tailwind CSS variant."
+    },
+    {
+      "name": "@apply",
+      "description": "Inlines existing Tailwind CSS utilities into a rule."
+    },
+    {
+      "name": "@reference",
+      "description": "Imports Tailwind CSS theme variables and utilities for reference."
+    },
+    {
+      "name": "@plugin",
+      "description": "Loads a legacy Tailwind CSS JavaScript plugin."
+    },
+    {
+      "name": "@config",
+      "description": "Loads a legacy Tailwind CSS JavaScript config file."
+    },
+    {
+      "name": "@slot",
+      "description": "Marks where a custom variant inserts the generated rules."
+    },
+    {
+      "name": "@tailwind",
+      "description": "Tailwind CSS v3 directive."
+    }
+  ]
+}

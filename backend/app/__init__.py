@@ -6,6 +6,7 @@ from flask import Flask, g, jsonify
 from sqlalchemy import text
 from werkzeug.exceptions import HTTPException
 
+from .ai_provider import DEFAULT_GEMINI_MODEL, GeminiScenarioAI
 from .database import Base, configure_database, get_session_factory
 from .routes import businesses, scenarios
 from .seed import seed_demo_business
@@ -15,7 +16,13 @@ from .validation import RequestValidationError
 def create_app(test_config: dict | None = None) -> Flask:
     load_dotenv()
     app = Flask(__name__)
-    app.config.from_mapping(DEBUG=False, DATABASE_URL=os.environ.get("DATABASE_URL"), MAX_CONTENT_LENGTH=1024 * 1024)
+    app.config.from_mapping(
+        DEBUG=False,
+        DATABASE_URL=os.environ.get("DATABASE_URL"),
+        GEMINI_API_KEY=os.environ.get("GEMINI_API_KEY"),
+        GEMINI_MODEL=os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+        MAX_CONTENT_LENGTH=1024 * 1024,
+    )
     app.config.from_prefixed_env()
 
     if test_config:
@@ -23,6 +30,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     configure_database(app)
     session_factory = get_session_factory(app)
+    app.extensions["scenario_ai"] = app.config.get("SCENARIO_AI") or GeminiScenarioAI(
+        api_key=app.config.get("GEMINI_API_KEY"),
+        model=app.config.get("GEMINI_MODEL"),
+    )
 
     @app.teardown_appcontext
     def close_session(error: BaseException | None = None) -> None:
