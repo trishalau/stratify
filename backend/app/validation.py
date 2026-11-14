@@ -37,6 +37,7 @@ BUSINESS_FIELDS = BUSINESS_STRING_FIELDS | BUSINESS_AMOUNT_FIELDS
 SCENARIO_EVENT_TYPES = {
     "supplier_price_increase",
     "sales_decrease",
+    "expense_change",
     "major_customer_loss",
     "new_competitor",
     "interest_rate_increase",

@@ -101,6 +101,29 @@ class StratifyApiTests(unittest.TestCase):
         )
         self.assertEqual(confirmation.status_code, 422)
 
+    def test_simulation_requires_confirmation_and_returns_deterministic_result(self):
+        business = self.create_business()
+        draft_response = self.client.post(
+            f"/api/businesses/{business['id']}/scenarios",
+            json={
+                "title": "Supplier prices rise by 20%",
+                "event_type": "supplier_price_increase",
+                "assumptions": {"supplier_cost_increase_percent": 20},
+            },
+        )
+        scenario_id = draft_response.get_json()["data"]["id"]
+
+        blocked = self.client.post(f"/api/scenarios/{scenario_id}/simulate")
+        self.assertEqual(blocked.status_code, 409)
+
+        confirmed = self.client.post(
+            f"/api/scenarios/{scenario_id}/confirm", json={"confirmed": True}
+        )
+        self.assertEqual(confirmed.status_code, 200)
+        result = self.client.post(f"/api/scenarios/{scenario_id}/simulate")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.get_json()["data"]["estimate"]["net_profit"], "30000.00")
+
 
 if __name__ == "__main__":
     unittest.main()

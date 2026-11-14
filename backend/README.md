@@ -1,6 +1,6 @@
 # Stratify backend
 
-Phase 2 Flask REST API and SQLAlchemy persistence for business profiles and scenario records. This phase does not calculate financial results or connect to an AI provider.
+Flask REST API, SQLAlchemy persistence, and a deterministic financial engine for the Stratify prototype. Scenario interpretation still does not use an AI provider.
 
 ## Local setup
 
@@ -35,17 +35,43 @@ The API is served at `http://127.0.0.1:5000/api`. `GET /api/health` checks the d
 | `GET` | `/api/scenarios/<id>` | Get a scenario |
 | `PATCH` | `/api/scenarios/<id>` | Edit a draft scenario |
 | `POST` | `/api/scenarios/<id>/confirm` | Confirm reviewed assumptions |
+| `POST` | `/api/scenarios/<id>/simulate` | Calculate a confirmed supported scenario |
 
-Scenario records begin in `draft` status. Confirmation requires explicit `{ "confirmed": true }`, at least one assumption, and an empty `missing_information` list. Confirmed scenarios are locked from edits. There is no simulation endpoint in this phase, so scenario data cannot produce financial outputs yet.
+Scenario records begin in `draft` status. Confirmation requires explicit `{ "confirmed": true }`, at least one assumption, and an empty `missing_information` list. Confirmed scenarios are locked from edits. The simulation endpoint checks confirmation again before calculation.
+
+The engine currently calculates supplier price increases, sales decreases, and percentage changes to one expense category (`supplier_costs`, `rent`, `staff_salaries`, or `other_expenses`). It uses Python `Decimal` with half-up cent rounding. It reports a baseline and central estimate. Optimistic/pessimistic estimates are returned only when both alternative assumptions are explicitly provided; the engine does not invent them. Cash-flow change is unavailable because payment timing, tax, debt, and capital-spending information is not part of the profile. No calculations are implemented for customer loss, new competitors, interest rates, or a new branch yet.
+
+Supported assumption fields:
+
+- `supplier_price_increase`: `supplier_cost_increase_percent`; optional pair `optimistic_supplier_cost_increase_percent` and `pessimistic_supplier_cost_increase_percent`.
+- `sales_decrease`: `sales_decrease_percent`; optional pair `optimistic_sales_decrease_percent` and `pessimistic_sales_decrease_percent`.
+- `expense_change`: `expense_category` and `expense_change_percent`; optional pair `optimistic_expense_change_percent` and `pessimistic_expense_change_percent`.
 
 Validation errors return HTTP 422 with a JSON `error` and field-level `fields`. The API currently has no authentication and is intended for local prototype use.
 
 ## Check the API
 
+Run the full suite with the project virtual environment. The runner creates `.venv` and installs `requirements.txt` if dependencies are missing, so it never falls back to a system Python that lacks Flask or click:
+
 ```bash
-python -m unittest discover -s tests
+./run-tests.sh
+```
+
+If the virtual environment is already active, the equivalent command is:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Do not run the suite with the system `python3` or `python`; those interpreters do not have the backend dependencies.
+
+With the API running in another terminal:
+
+```bash
 curl http://127.0.0.1:5000/api/health
 curl http://127.0.0.1:5000/api/businesses
 ```
 
-The automated API tests use an in-memory SQLite database as a fast test adapter. PostgreSQL remains the configured application database. The initial schema uses SQLAlchemy `create_all`; schema migrations are not introduced in this phase.
+The financial engine tests use only Python's standard library and can run separately with `./run-tests.sh -p 'test_financial_engine.py'`. API tests use an in-memory SQLite database as a fast test adapter. PostgreSQL remains the configured application database. The initial schema uses SQLAlchemy `create_all`; schema migrations are not introduced in this phase.
+
+The full suite currently passes 13 tests, including Flask route tests against SQLite. Those tests do not verify a live PostgreSQL connection. In this environment, Docker socket access and a localhost PostgreSQL connection are unavailable; verify `GET /api/health` after starting the documented PostgreSQL service on a machine with Docker access.

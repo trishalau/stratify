@@ -2,8 +2,9 @@ from flask import Blueprint, g, jsonify, request
 from sqlalchemy import select
 
 from ..models import Business, Scenario, utc_now
-from ..serializers import scenario_to_dict
+from ..serializers import business_to_dict, scenario_to_dict
 from ..validation import RequestValidationError, parse_scenario_payload
+from stratify_engine import FinancialEngineError, simulate_scenario
 
 bp = Blueprint("scenarios", __name__)
 
@@ -87,3 +88,24 @@ def confirm_scenario(scenario_id: int):
     scenario.confirmed_at = utc_now()
     g.db_session.commit()
     return jsonify({"data": scenario_to_dict(scenario)})
+
+
+@bp.post("/scenarios/<int:scenario_id>/simulate")
+def run_scenario(scenario_id: int):
+    scenario = _find_scenario(scenario_id)
+    if scenario is None:
+        return jsonify({"error": "Scenario not found."}), 404
+    if scenario.status != "confirmed":
+        return jsonify({"error": "Confirm the scenario assumptions before simulating."}), 409
+    if scenario.missing_information:
+        return jsonify({"error": "Resolve missing information before simulating."}), 409
+
+    business = g.db_session.get(Business, scenario.business_id)
+    if business is None:
+        return jsonify({"error": "Business not found."}), 404
+
+    try:
+        result = simulate_scenario(business_to_dict(business), scenario_to_dict(scenario))
+    except FinancialEngineError as error:
+        return jsonify({"error": str(error), "fields": {error.field: str(error)}}), 422
+    return jsonify({"data": result})
