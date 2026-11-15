@@ -23,6 +23,12 @@ Connect the repository to Vercel and set the project root to `frontend`. Use `np
 
 The only frontend environment variable is the public API origin. Configure `DATABASE_URL`, `GEMINI_API_KEY`, Flask secrets, and demo-mode settings only in the backend project's environment.
 
+New scenario results and scenario history are held in shared React memory for the current browser session; a refresh clears them along with edited business values. The Vercel config adds browser security headers and a Content Security Policy. `connect-src` allows Vercel-hosted backend projects by default; add a custom HTTPS backend origin there if you use one.
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | `https://your-backend-project.vercel.app` | Public backend origin. Set separately for Preview and Production; never put credentials or API keys in this variable. |
+
 ## Frontend stack
 
 - React and TypeScript with Vite

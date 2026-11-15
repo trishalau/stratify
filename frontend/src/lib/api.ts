@@ -41,7 +41,7 @@ export type FinancialPosition = {
 }
 
 export type SimulationCalculation = {
-  scenario_id: number
+  scenario_id: number | null
   title: string
   event_type: string
   status: string
@@ -143,6 +143,26 @@ export const createScenario = (businessId: number, input: {
 }) => request<{ id: number }>(`/api/businesses/${businessId}/scenarios`, {
   method: 'POST', body: JSON.stringify(input),
 })
+
+export type ScenarioInput = {
+  title: string
+  event_type: string
+  description: string
+  assumptions: Record<string, string | number>
+  missing_information: string[]
+}
+
+export const simulateDemoScenario = (businessId: number, scenario: ScenarioInput, business: Business) =>
+  request<SimulationCalculation>(`/api/businesses/${businessId}/scenarios/simulate`, {
+    method: 'POST', body: JSON.stringify({ scenario, business_snapshot: businessSnapshot(business), confirmed: true }),
+  })
+
+export const explainDemoScenario = (businessId: number, scenario: ScenarioInput, business: Business) =>
+  request<{ calculation: SimulationCalculation; explanation: ScenarioExplanation }>(
+    `/api/businesses/${businessId}/scenarios/explain`, {
+      method: 'POST', body: JSON.stringify({ scenario, business_snapshot: businessSnapshot(business), confirmed: true }),
+    },
+  )
 
 export const confirmScenario = (scenarioId: number) =>
   request<{ id: number }>(`/api/scenarios/${scenarioId}/confirm`, {

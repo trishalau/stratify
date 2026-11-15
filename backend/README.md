@@ -11,7 +11,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
-# Edit .env and set a random STRATIFY_SESSION_SECRET before starting the API.
+# Replace DATABASE_URL with the local Compose PostgreSQL URL and set a random
+# STRATIFY_SESSION_SECRET before starting the API.
 docker compose up -d db
 flask --app run:app init-db
 flask --app run:app seed-demo
@@ -22,9 +23,55 @@ The local PostgreSQL service uses the development-only credentials in `compose.y
 
 The API is served at `http://127.0.0.1:5000/api`. `GET /api/health` checks the database connection. Amounts are returned as decimal strings to avoid losing cents through JSON floating-point conversion. Unknown inventory and liabilities remain `null`.
 
+## Vercel backend project
+
+Connect the same GitHub repository as the frontend and set the Vercel project root to `backend`. Vercel loads the Flask WSGI application from `index.py`; local development continues to use `python run.py`. The `.python-version` file selects Python 3.13, and `requirements.txt` contains the application's runtime dependencies. No development server is started by the Vercel entry point.
+
+The application factory is initialized once per warm function instance. SQLAlchemy's PostgreSQL engine uses a small bounded pool (two connections, no overflow, pre-ping and five-minute recycling); each request gets its own SQLAlchemy session, which is closed during Flask teardown. Use a managed PostgreSQL provider's pooled connection endpoint for deployment and keep its total connection limits in mind as Vercel adds function instances. No schema creation or migration runs when a request starts.
+
+The Vercel entry point forces Flask debug and exception propagation off, uses secure session cookies, and requires `STRATIFY_SESSION_SECRET`. Unhandled API errors are logged server-side and return a generic response without a traceback. Keep `DATABASE_URL`, `GEMINI_API_KEY`, and `STRATIFY_SESSION_SECRET` in the backend project's environment settings only.
+
+## Separate managed demo database
+
+Create a new, empty managed PostgreSQL database for deployment with a name distinct from the local `stratify` database (for example, `stratify_demo`). Do not point it at the local Docker database, and do not expose PostgreSQL directly to browsers. Restrict database network access to the backend deployment/provider's supported private or pooled connection path. The serverless engine requires TLS: it adds `sslmode=require` if the URL has no SSL mode, and accepts the stricter `verify-ca` or `verify-full` modes.
+
+Apply `migrations/deployment/20261118_create_public_demo.sql` once using the managed provider's SQL editor or another controlled database-admin session. It runs transactionally, creates the no-login `businesses` and `scenarios` tables plus a migration ledger, creates and verifies required columns, indexes, foreign keys and checks, and inserts the fictional KL Electronics row if absent. Then apply `20261119_add_ai_rate_limits.sql` once; it adds an indexed table containing only HMAC-hashed client identifiers and short-lived request counters for Gemini rate limiting. Neither migration creates `users` or `owner_id`, and neither runs automatically during a web request. The migrations target a fresh, separate deployment database; the existing local database must remain untouched. Do not apply the owner-registration migrations to this demo database.
+
+After applying the migration, verify the seed with a read-only query in the provider console:
+
+```sql
+SELECT name, currency, monthly_revenue, supplier_costs, rent,
+       staff_salaries, other_expenses, cash_balance
+FROM businesses
+WHERE name = 'KL Electronics Sdn. Bhd.';
+```
+
+The expected figures are MYR 120000.00 revenue, 40000.00 supplier costs, 10000.00 rent, 20000.00 salaries, 12000.00 other expenses, and 160000.00 cash. Set the managed database's pooled TLS connection URL as `DATABASE_URL` only in the backend Vercel project.
+
+## Deployment environment variables
+
+Use Vercel Project Settings → Environment Variables. Configure Preview and Production separately; do not connect an untrusted Preview deployment to the Production database or reuse Production Gemini/session secrets in Preview. Vercel applies changed values to new deployments.
+
+| Variable | Project | Required | Purpose |
+| --- | --- | --- | --- |
+| `VITE_API_BASE_URL` | Frontend only | Yes | Public origin of the matching backend deployment, without `/api`; this is embedded in the browser bundle and must contain no secret. |
+| `DATABASE_URL` | Backend only | Yes | Pooled connection URL for the separate managed PostgreSQL database. Serverless startup requires TLS. |
+| `GEMINI_API_KEY` | Backend only | For AI | Gemini Developer API credential. Keep it only in backend Preview/Production settings. |
+| `STRATIFY_SESSION_SECRET` | Backend only | Yes | Random Flask signing secret. Required by the Vercel entry point even while demo login is disabled. Use a different value per environment. |
+| `STRATIFY_DEMO_MODE` | Backend only | Yes | Set to `true` for this public single-business demo. |
+| `STRATIFY_CORS_ORIGINS` | Backend only | Yes | Comma-separated exact frontend origins allowed to call this deployment, including approved Preview origins. |
+| `AI_RATE_LIMIT_PER_MINUTE` | Backend only | No | Gemini interpretation request limit per client; defaults to 12 per minute. |
+| `GEMINI_MODEL` | Backend only | No | Optional model override; defaults to the model configured by the app. |
+
+`STRATIFY_COOKIE_SECURE` is local-development configuration; Vercel serverless mode always sets secure cookies. `FLASK_DEBUG` is local-only and must not be enabled in Vercel. `STRATIFY_DEMO_OWNER_USERNAME` is only for the legacy account-owned seed command and is not needed for the public demo database. The backend `.env.example` contains placeholders only; replace them in a local ignored `.env` for development. The frontend `.env.example` intentionally leaves `VITE_API_BASE_URL` blank so local Vite uses its Flask proxy.
+
+For Preview, point the frontend's `VITE_API_BASE_URL` at the Preview backend, and set the backend's `DATABASE_URL` to a separate Preview-only demo database. Set `STRATIFY_CORS_ORIGINS` to the exact deployed frontend Preview origin(s); wildcard origins are not supported. Give Preview its own Gemini key and session secret. For Production, configure the corresponding Production backend URL, managed Production database, Gemini key, session secret, and exact frontend Production origin. Never put backend variables in the frontend project or any `VITE_` variable.
+
 For a reviewer-facing hackathon demo, `STRATIFY_DEMO_MODE` defaults to `true` (set it to `false` to use the preserved sign-in flow). Reviewers open directly to the dashboard. Demo API requests do not look up an owner or depend on the `users` table; business and scenario reads are scoped to the seeded `KL Electronics Sdn. Bhd.` record. Registration and sign-in endpoints are disabled in demo mode; no database rows or authentication code are removed.
 
-Demo profile edits live only in the React business context and reset to the original sample values on refresh. Scenario interpretation, simulation and explanation requests must send a complete, validated snapshot of that in-memory profile; the API will not silently substitute stale database figures. The snapshot is used only for that request and is not written to PostgreSQL. Business create, update and delete API routes are blocked in demo mode to protect the PostgreSQL seed. Scenario records remain saved as before. Keep database and Gemini credentials only in this backend `.env`; never define them as Vite environment variables.
+Demo profile edits live only in the React business context and reset to the original sample values on refresh. Scenario interpretation, simulation and explanation requests send a complete, validated snapshot of that in-memory profile; the API will not silently substitute stale database figures. The snapshot is used only for that request and is not written to PostgreSQL. Business create, update and delete API routes and scenario create, update, delete and confirmation routes are blocked in demo mode. New demo simulation results stay in frontend memory for the current page session. Older database scenario rows can be read and recalculated but are read-only. Gemini interpretation is limited to 12 requests per client per minute by default, using a shared PostgreSQL counter so Vercel instances enforce the same limit; raw client addresses are not stored. Keep database and Gemini credentials only in this backend `.env`; never define them as Vite environment variables.
+
+The frontend's `vercel.json` sends security headers including a Content Security Policy. The HTML policy narrows `connect-src` to the configured `VITE_API_BASE_URL` (plus local Flask development); the static Vercel header also permits Vercel-hosted API projects. The backend allows browser requests only from exact origins in `STRATIFY_CORS_ORIGINS`; set different origins for Preview and Production as needed.
 
 With `STRATIFY_DEMO_MODE=false`, users can create accounts from the sign-in screen. Passwords are stored as Werkzeug password hashes; responses never include passwords or hashes. Set `STRATIFY_SESSION_SECRET` to a long random value and do not use the example placeholder. The browser receives only a signed, HttpOnly, SameSite=Lax session cookie. Cookies are non-Secure for local HTTP; set `STRATIFY_COOKIE_SECURE=true` when serving over HTTPS. `/api/health` and auth endpoints are public; in production mode, business and scenario endpoints require an authenticated session and enforce owner scoping. Passwords must be 6–12 characters for the current prototype. Account recovery and email verification are not implemented.
 
@@ -89,7 +136,7 @@ Supported assumption fields:
 - `sales_decrease`: `sales_decrease_percent`; optional pair `optimistic_sales_decrease_percent` and `pessimistic_sales_decrease_percent`.
 - `expense_change`: `expense_category` and `expense_change_percent`; optional pair `optimistic_expense_change_percent` and `pessimistic_expense_change_percent`.
 
-Validation errors return HTTP 422 with a JSON `error` and field-level `fields`. The API currently has no authentication and is intended for local prototype use.
+Validation errors return HTTP 422 with a JSON `error` and field-level `fields`. The reviewer demo intentionally has no login; setting `STRATIFY_DEMO_MODE=false` re-enables the preserved owner authentication flow.
 
 ## Check the API
 
@@ -118,4 +165,4 @@ The financial engine tests use only Python's standard library and can run separa
 
 The full suite includes financial-engine, API-route, AI-contract, and mocked AI-route tests. API tests use in-memory SQLite and do not exercise PostgreSQL. The project owner separately verified the local Mac PostgreSQL container as healthy, `pg_isready` as accepting connections, `/api/health` as connected, and `/api/businesses/1` as returning the demo business. A sandbox's inability to access that Mac's Docker socket is an environment boundary, not evidence of an application error.
 
-For frontend development, run Vite from `frontend` with `npm run dev`; its `/api` proxy expects Flask at `http://127.0.0.1:5000`. Start Flask separately using `python run.py`. Production hosting and cross-origin API configuration are not part of this prototype phase.
+For frontend development, run Vite from `frontend` with `npm run dev`; its `/api` proxy expects Flask at `http://127.0.0.1:5000`. Start the local Flask development server separately using `python run.py`.

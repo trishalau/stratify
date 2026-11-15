@@ -84,3 +84,17 @@ class Scenario(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     business: Mapped[Business] = relationship(back_populates="scenarios")
+
+
+class AIRateLimit(Base):
+    """Short-lived, hashed client counters for the public AI endpoint."""
+
+    __tablename__ = "ai_rate_limits"
+    __table_args__ = (
+        CheckConstraint("request_count >= 0", name="ck_ai_rate_limit_count_nonnegative"),
+    )
+
+    client_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    window_started: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)

@@ -5,16 +5,19 @@ import { Link, useLocation } from 'react-router-dom'
 import { Button, Card, DemoNotice, PageHeader } from '../components/ui'
 import { useDemoBusiness } from '../components/demo-business-context'
 import { demoResult } from '../data/demo-data'
-import { explainScenario, type ScenarioExplanation, type SimulationCalculation } from '../lib/api'
+import { explainDemoScenario, explainScenario, type ScenarioExplanation, type ScenarioInput, type SimulationCalculation } from '../lib/api'
 
 export default function Results() {
   const location = useLocation()
-  const state = location.state as { calculation?: SimulationCalculation; scenarioId?: number; selectedEvent?: string } | null
+  const { demoScenarioRuns } = useDemoBusiness()
+  const state = location.state as { calculation?: SimulationCalculation; scenarioId?: number; selectedEvent?: string; sessionRunId?: number } | null
+  const sessionRun = demoScenarioRuns.find((run) => run.scenario.id === state?.sessionRunId)
+  if (sessionRun) return <LiveResults calculation={sessionRun.calculation} scenarioId={sessionRun.scenario.id} scenarioInput={{ title: sessionRun.scenario.title, event_type: sessionRun.scenario.event_type, description: sessionRun.scenario.description ?? '', assumptions: sessionRun.scenario.assumptions, missing_information: sessionRun.scenario.missing_information }} businessId={sessionRun.scenario.business_id} />
   if (state?.calculation && state.scenarioId) return <LiveResults calculation={state.calculation} scenarioId={state.scenarioId} />
   return <DemoResults selectedEvent={state?.selectedEvent} />
 }
 
-function LiveResults({ calculation, scenarioId }: { calculation: SimulationCalculation; scenarioId: number }) {
+function LiveResults({ calculation, scenarioId, scenarioInput, businessId }: { calculation: SimulationCalculation; scenarioId: number; scenarioInput?: ScenarioInput; businessId?: number }) {
   const { business } = useDemoBusiness()
   const [explanation, setExplanation] = useState<ScenarioExplanation | null>(null)
   const [explanationError, setExplanationError] = useState('')
@@ -38,17 +41,20 @@ function LiveResults({ calculation, scenarioId }: { calculation: SimulationCalcu
 
   useEffect(() => {
     let active = true
-    explainScenario(scenarioId, business)
+    const explanationRequest = scenarioInput && businessId
+      ? explainDemoScenario(businessId, scenarioInput, business)
+      : explainScenario(scenarioId, business)
+    explanationRequest
       .then((result) => { if (active) setExplanation(result.explanation) })
       .catch((error: Error) => { if (active) setExplanationError(error.message) })
       .finally(() => { if (active) setLoadingExplanation(false) })
     return () => { active = false }
-  }, [scenarioId, business])
+  }, [scenarioId, scenarioInput, businessId, business])
 
   return <>
     <PageHeader eyebrow="DETERMINISTIC SCENARIO ESTIMATE" title="Scenario results" description="A hypothetical monthly comparison calculated from your confirmed assumptions." action={<Button variant="ghost" size="sm" onClick={() => window.print()}><Download size={15} /> Print / PDF</Button>} />
     <DemoNotice>Estimate based on confirmed assumptions and your current in-memory demo values. Refreshing restores the original fictional sample data. This is not a guaranteed prediction or financial advice.</DemoNotice>
-    <div className="result-title-row"><div><span className="result-event-icon"><ArrowDownRight size={18} /></span><div><div className="eyebrow">SAVED SCENARIO · #{scenarioId}</div><h2>{calculation.title}</h2><span className="result-date">Monthly estimate <i /> {calculation.status}</span></div></div><Link className="back-link result-back" to="/simulator"><ArrowLeft size={14} /> New scenario</Link></div>
+    <div className="result-title-row"><div><span className="result-event-icon"><ArrowDownRight size={18} /></span><div><div className="eyebrow">{scenarioInput ? 'CURRENT SESSION · TEMPORARY RUN' : `SAVED SCENARIO · #${scenarioId}`}</div><h2>{calculation.title}</h2><span className="result-date">Monthly estimate <i /> {calculation.status}</span></div></div><Link className="back-link result-back" to="/simulator"><ArrowLeft size={14} /> New scenario</Link></div>
     <div className="result-stat-grid">{metrics.map((metric) => {
       const delta = Number(metric.after) - Number(metric.before)
       const favorable = metric.title === 'Monthly expenses' ? delta <= 0 : delta >= 0
@@ -66,7 +72,7 @@ function LiveResults({ calculation, scenarioId }: { calculation: SimulationCalcu
         <Card className="scenario-range-card"><div className="section-title">Scenario range</div><div className="section-subtitle">Based on explicitly provided alternatives</div>{calculation.comparison.range_available && calculation.comparison.optimistic && calculation.comparison.pessimistic ? <div className="range-values"><div><span>Optimistic profit</span><strong>{formatMoney(calculation.comparison.optimistic.net_profit)}</strong></div><div><span>Pessimistic profit</span><strong>{formatMoney(calculation.comparison.pessimistic.net_profit)}</strong></div></div> : <p>{calculation.comparison.range_reason}</p>}<div className="range-caption"><span>Cash-flow projection: unavailable</span><span>Monthly</span></div></Card>
       </div>
     </div>
-    <div className="assumptions-panel"><div><div className="assumptions-title"><Info size={16} /> Confirmed assumptions & limitations</div><p>{Object.entries(calculation.assumptions).map(([name, value]) => `${name.replaceAll('_', ' ')}: ${value}`).join(' · ')}. {calculation.limitations.join(' ')}</p><p>{calculation.cash_flow.reason}</p></div><div className="assumptions-foot"><span>Scenario #{scenarioId}</span><Button to="/history" variant="secondary" size="sm">View scenario history <ArrowRight size={14} /></Button></div></div>
+    <div className="assumptions-panel"><div><div className="assumptions-title"><Info size={16} /> Confirmed assumptions & limitations</div><p>{Object.entries(calculation.assumptions).map(([name, value]) => `${name.replaceAll('_', ' ')}: ${value}`).join(' · ')}. {calculation.limitations.join(' ')}</p><p>{calculation.cash_flow.reason}</p></div><div className="assumptions-foot"><span>{scenarioInput ? 'Temporary browser session run' : `Scenario #${scenarioId}`}</span><Button to="/history" variant="secondary" size="sm">View scenario history <ArrowRight size={14} /></Button></div></div>
   </>
 }
 

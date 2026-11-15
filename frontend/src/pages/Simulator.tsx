@@ -5,7 +5,7 @@ import { Button, Card, DemoNotice, Field, PageHeader } from '../components/ui'
 import { useDemoBusiness } from '../components/demo-business-context'
 import { money, scenarios } from '../data/demo-data'
 import { Activity, Landmark, Package, Store, Target, TrendingDown, UserRoundX } from 'lucide-react'
-import { confirmScenario, createScenario, interpretScenarioWithDemoProfile, listBusinesses, simulateScenario, type ChatMessage, type ScenarioInterpretation } from '../lib/api'
+import { interpretScenarioWithDemoProfile, listBusinesses, simulateDemoScenario, type ChatMessage, type SavedScenario, type ScenarioInput, type ScenarioInterpretation } from '../lib/api'
 
 const icons = { package: Package, 'trending-down': TrendingDown, 'user-round-x': UserRoundX, target: Target, landmark: Landmark, store: Store }
 
@@ -42,7 +42,7 @@ export default function Simulator() {
   const [customEvent, setCustomEvent] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [interpretation, setInterpretation] = useState<ScenarioInterpretation | null>(null)
-  const { business, setBusiness } = useDemoBusiness()
+  const { business, setBusiness, setDemoScenarioRuns } = useDemoBusiness()
   const [apiError, setApiError] = useState('')
   const [busy, setBusy] = useState(false)
   const [interpretationConfirmed, setInterpretationConfirmed] = useState(false)
@@ -126,16 +126,17 @@ export default function Simulator() {
     setApiError('')
     try {
       const description = chatMessages.filter((message) => message.role === 'user').map((message) => message.content).join('\n')
-      const scenario = await createScenario(business.id, {
+      const scenarioInput: ScenarioInput = {
         title: interpretation.title,
         event_type: interpretation.event_type,
         description,
         assumptions: interpretation.assumptions,
         missing_information: [],
-      })
-      await confirmScenario(scenario.id)
-      const calculation = await simulateScenario(scenario.id, business)
-      navigate('/results', { state: { calculation, scenarioId: scenario.id } })
+      }
+      const calculation = await simulateDemoScenario(business.id, scenarioInput, business)
+      const scenario: SavedScenario = { ...scenarioInput, id: Date.now(), business_id: business.id, status: 'confirmed', created_at: new Date().toISOString() }
+      setDemoScenarioRuns((runs) => [{ scenario, calculation }, ...runs])
+      navigate('/results', { state: { sessionRunId: scenario.id } })
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Could not run the confirmed scenario.')
     } finally {
@@ -151,16 +152,17 @@ export default function Simulator() {
     setApiError('')
     try {
       const supplierEvent = selected === 'supplier'
-      const scenario = await createScenario(business.id, {
+      const scenarioInput: ScenarioInput = {
         title: `${active.title} by ${value}%`,
         event_type: supplierEvent ? 'supplier_price_increase' : 'sales_decrease',
         description: `${active.title} by ${value}%.`,
         assumptions: { [supplierEvent ? 'supplier_cost_increase_percent' : 'sales_decrease_percent']: value },
         missing_information: [],
-      })
-      await confirmScenario(scenario.id)
-      const calculation = await simulateScenario(scenario.id, business)
-      navigate('/results', { state: { calculation, scenarioId: scenario.id } })
+      }
+      const calculation = await simulateDemoScenario(business.id, scenarioInput, business)
+      const scenario: SavedScenario = { ...scenarioInput, id: Date.now(), business_id: business.id, status: 'confirmed', created_at: new Date().toISOString() }
+      setDemoScenarioRuns((runs) => [{ scenario, calculation }, ...runs])
+      navigate('/results', { state: { sessionRunId: scenario.id } })
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Could not calculate this demo scenario.')
     } finally {
@@ -223,7 +225,7 @@ export default function Simulator() {
                 {interpretation.event_type === 'expense_change' && !('expense_category' in interpretation.assumptions) && <div className="expense-mapping-panel"><div><strong>Choose which saved expense line to use</strong><p>Select a built-in expense or one of your custom monthly variables. Revenue has its own event; cash, inventory, and liabilities are not calculated as expenses.</p></div><div className="expense-option-list">{[...baseExpenseOptions.map((option) => ({ ...option, value: business?.[option.profileKey] ?? '0' })), ...(business?.custom_monthly_variables ?? []).map((item) => ({ key: `custom:${item.name}`, label: item.name, description: 'Custom monthly expense from your business profile.', value: item.value }))].map((option) => <label className={`expense-option ${expenseMapping === option.key ? 'expense-option-selected' : ''}`} key={option.key}><input type="radio" name="expense-mapping" value={option.key} checked={expenseMapping === option.key} onChange={() => setExpenseMapping(option.key)} /><span className="expense-option-check"><Check size={12} /></span><span className="expense-option-copy"><strong>{option.label}</strong><small>{option.description}</small></span><b>{business ? `${business.currency} ${Number(option.value).toLocaleString('en-MY')}` : '—'}</b></label>)}</div><div className="expense-mapping-action"><small>This choice is sent back as your clarification. You will review the resulting assumptions before any calculation.</small><Button size="sm" variant="secondary" disabled={!expenseMapping || busy} onClick={useExpenseMapping}>{busy ? 'Clarifying…' : 'Use selected line'} <ArrowRight size={14} /></Button></div></div>}
                 {interpretation.missing_information.length > 0 && <div className="inline-notice"><strong>Information needed</strong><ul>{interpretation.missing_information.map((item) => <li key={item}>{item}</li>)}</ul></div>}
                 {!interpretation.simulation_supported && !interpretation.clarification_only && <div className="inline-notice">This event is understood, but the deterministic engine does not yet calculate it. No financial result will be generated.</div>}
-                {interpretation.ready_for_confirmation && interpretation.simulation_supported && <label className="check-row interpretation-confirm"><input type="checkbox" checked={interpretationConfirmed} onChange={(event) => setInterpretationConfirmed(event.target.checked)} /><span className="custom-check"><Check size={12} /></span><span><strong>I reviewed and confirm these assumptions</strong><small>Stratify will save this scenario and run its deterministic monthly calculation.</small></span></label>}
+                {interpretation.ready_for_confirmation && interpretation.simulation_supported && <label className="check-row interpretation-confirm"><input type="checkbox" checked={interpretationConfirmed} onChange={(event) => setInterpretationConfirmed(event.target.checked)} /><span className="custom-check"><Check size={12} /></span><span><strong>I reviewed and confirm these assumptions</strong><small>Stratify will calculate this scenario for the current browser session.</small></span></label>}
                 <div className="interpretation-actions"><span>{interpretation.ready_for_confirmation ? 'Ready after your confirmation' : 'Resolve missing information to continue'}</span>{interpretation.ready_for_confirmation && interpretation.simulation_supported && <Button size="sm" disabled={!interpretationConfirmed || busy} onClick={runConfirmedScenario}>{busy ? 'Running…' : 'Confirm & run'} <ArrowRight size={14} /></Button>}</div>
               </div>}
             </div></div>

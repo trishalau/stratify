@@ -18,7 +18,7 @@ from .seed import seed_demo_business
 from .validation import RequestValidationError
 
 
-def create_app(test_config: dict | None = None) -> Flask:
+def create_app(test_config: dict | None = None, *, serverless: bool = False) -> Flask:
     load_dotenv()
     app = Flask(__name__)
     app.config.from_mapping(
@@ -34,12 +34,25 @@ def create_app(test_config: dict | None = None) -> Flask:
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
         STRATIFY_DEMO_MODE=os.environ.get("STRATIFY_DEMO_MODE", "true").lower() == "true",
         STRATIFY_DEMO_OWNER_USERNAME=os.environ.get("STRATIFY_DEMO_OWNER_USERNAME", "owner"),
+        STRATIFY_CORS_ORIGINS=os.environ.get("STRATIFY_CORS_ORIGINS", ""),
+        AI_RATE_LIMIT_PER_MINUTE=int(os.environ.get("AI_RATE_LIMIT_PER_MINUTE", "12")),
     )
     app.config.from_prefixed_env()
 
     if test_config:
         app.config.update(test_config)
-    if not app.config.get("SECRET_KEY"):
+    if serverless:
+        if not app.config.get("SECRET_KEY"):
+            raise RuntimeError("STRATIFY_SESSION_SECRET must be configured for serverless deployment.")
+        # Do not allow a copied development FLASK_DEBUG setting to enable the
+        # interactive debugger or exception propagation in a deployed function.
+        app.config.update(
+            DEBUG=False,
+            PROPAGATE_EXCEPTIONS=False,
+            SESSION_COOKIE_SECURE=True,
+            SERVERLESS_RUNTIME=True,
+        )
+    elif not app.config.get("SECRET_KEY"):
         app.config["SECRET_KEY"] = secrets.token_hex(32)
 
     configure_database(app)
@@ -156,6 +169,19 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.before_request
     def require_owner_session():
+        origin = request.headers.get("Origin")
+        configured_origins = app.config.get("STRATIFY_CORS_ORIGINS", "")
+        allowed_origins = {
+            item.strip().rstrip("/")
+            for item in (configured_origins.split(",") if isinstance(configured_origins, str) else configured_origins)
+            if item and item.strip()
+        }
+        if not app.config.get("SERVERLESS_RUNTIME"):
+            allowed_origins.update({"http://localhost:5173", "http://127.0.0.1:5173"})
+        if origin and origin.rstrip("/") not in allowed_origins:
+            return jsonify({"error": "Origin is not allowed."}), 403
+        if request.method == "OPTIONS" and request.path.startswith("/api/"):
+            return "", 204
         if not request.path.startswith("/api/"):
             return
         if request.path in {"/api/health", "/api/auth/session", "/api/auth/register", "/api/auth/login", "/api/auth/logout"}:
@@ -168,5 +194,30 @@ def create_app(test_config: dict | None = None) -> Flask:
         if user is None:
             return jsonify({"error": "Authentication required."}), 401
         g.current_user = user
+
+    @app.after_request
+    def apply_security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        if app.config.get("SERVERLESS_RUNTIME") or request.is_secure:
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        origin = request.headers.get("Origin")
+        configured_origins = app.config.get("STRATIFY_CORS_ORIGINS", "")
+        allowed_origins = {
+            item.strip().rstrip("/")
+            for item in (configured_origins.split(",") if isinstance(configured_origins, str) else configured_origins)
+            if item and item.strip()
+        }
+        if not app.config.get("SERVERLESS_RUNTIME"):
+            allowed_origins.update({"http://localhost:5173", "http://127.0.0.1:5173"})
+        if origin and origin.rstrip("/") in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PATCH, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            response.headers["Vary"] = "Origin"
+        return response
 
     return app

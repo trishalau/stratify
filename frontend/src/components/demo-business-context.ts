@@ -1,5 +1,7 @@
 import { createContext, useContext, type Dispatch, type SetStateAction } from 'react'
-import type { Business } from '../lib/api'
+import type { Business, SavedScenario, SimulationCalculation } from '../lib/api'
+
+export type DemoScenarioRun = { scenario: SavedScenario; calculation: SimulationCalculation }
 
 export const originalDemoBusiness: Business = {
   id: 1,
@@ -18,7 +20,12 @@ export const originalDemoBusiness: Business = {
   custom_monthly_variables: [],
 }
 
-export const DemoBusinessContext = createContext<{ business: Business; setBusiness: Dispatch<SetStateAction<Business>> } | null>(null)
+export const DemoBusinessContext = createContext<{
+  business: Business
+  setBusiness: Dispatch<SetStateAction<Business>>
+  demoScenarioRuns: DemoScenarioRun[]
+  setDemoScenarioRuns: Dispatch<SetStateAction<DemoScenarioRun[]>>
+} | null>(null)
 
 export function useDemoBusiness() {
   const value = useContext(DemoBusinessContext)

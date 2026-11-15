@@ -4,6 +4,7 @@ from sqlalchemy import text
 
 from app import create_app
 from app.database import Base, get_engine
+from app.models import AIRateLimit
 
 
 class FakeScenarioAI:
@@ -78,6 +79,141 @@ class StratifyApiTests(unittest.TestCase):
         Base.metadata.create_all(get_engine(self.app))
         self.client = self.app.test_client()
         self.client.post("/api/auth/register", json={"username": "owner", "password": "ownpass1234"})
+
+    def test_serverless_app_requires_secret_and_disables_debug_settings(self):
+        config = {
+            "TESTING": True,
+            "DATABASE_URL": "sqlite+pysqlite:///:memory:",
+            "SECRET_KEY": "serverless-test-secret",
+            "DEBUG": True,
+            "SESSION_COOKIE_SECURE": False,
+        }
+        serverless_app = create_app(config, serverless=True)
+        self.assertFalse(serverless_app.config["DEBUG"])
+        self.assertFalse(serverless_app.config["PROPAGATE_EXCEPTIONS"])
+        self.assertTrue(serverless_app.config["SESSION_COOKIE_SECURE"])
+
+        config["SECRET_KEY"] = None
+        with self.assertRaisesRegex(RuntimeError, "STRATIFY_SESSION_SECRET"):
+            create_app(config, serverless=True)
+
+    def test_postgres_engine_uses_bounded_connection_pool(self):
+        app = create_app({
+            "TESTING": True,
+            "DATABASE_URL": "postgresql+psycopg://stratify:placeholder@localhost/stratify",
+            "SECRET_KEY": "pool-test-secret",
+        })
+        engine = get_engine(app)
+        self.assertEqual(engine.pool.size(), 2)
+        self.assertEqual(engine.pool._max_overflow, 0)
+        self.assertEqual(engine.pool._timeout, 10)
+        engine.dispose()
+
+    def test_serverless_postgres_enforces_ssl_in_database_url(self):
+        app = create_app({
+            "TESTING": True,
+            "DATABASE_URL": "postgresql+psycopg://stratify:placeholder@db.example/stratify",
+            "SECRET_KEY": "ssl-test-secret",
+        }, serverless=True)
+        engine = get_engine(app)
+        self.assertEqual(engine.url.query["sslmode"], "require")
+        self.assertEqual(engine.pool.size(), 2)
+        engine.dispose()
+
+        secure_app = create_app({
+            "TESTING": True,
+            "DATABASE_URL": "postgresql+psycopg://stratify:placeholder@db.example/stratify?sslmode=verify-full",
+            "SECRET_KEY": "ssl-test-secret",
+        }, serverless=True)
+        self.assertEqual(get_engine(secure_app).url.query["sslmode"], "verify-full")
+        get_engine(secure_app).dispose()
+
+        with self.assertRaisesRegex(RuntimeError, "requires sslmode"):
+            create_app({
+                "TESTING": True,
+                "DATABASE_URL": "postgresql+psycopg://stratify:placeholder@db.example/stratify?sslmode=prefer",
+                "SECRET_KEY": "ssl-test-secret",
+            }, serverless=True)
+
+    def test_unhandled_server_errors_do_not_return_tracebacks(self):
+        app = create_app({
+            "TESTING": True,
+            "DATABASE_URL": "sqlite+pysqlite:///:memory:",
+            "SECRET_KEY": "error-test-secret",
+            "STRATIFY_DEMO_MODE": True,
+        })
+
+        @app.get("/api/test-unhandled-error")
+        def raise_unhandled_error():
+            raise RuntimeError("internal database detail must remain private")
+
+        response = app.test_client().get("/api/test-unhandled-error")
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.get_json(), {"error": "An unexpected server error occurred."})
+        self.assertNotIn("Traceback", response.get_data(as_text=True))
+        self.assertNotIn("internal database detail", response.get_data(as_text=True))
+
+    def test_security_headers_and_exact_origin_cors(self):
+        app = create_app({
+            "TESTING": True,
+            "DATABASE_URL": "sqlite+pysqlite:///:memory:",
+            "SECRET_KEY": "cors-test-secret",
+            "STRATIFY_DEMO_MODE": True,
+            "STRATIFY_CORS_ORIGINS": ["https://stratify-demo.example"],
+        })
+        Base.metadata.create_all(get_engine(app))
+        client = app.test_client()
+        allowed = client.get("/api/health", headers={"Origin": "https://stratify-demo.example"})
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.headers["Access-Control-Allow-Origin"], "https://stratify-demo.example")
+        self.assertEqual(allowed.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(allowed.headers["X-Frame-Options"], "DENY")
+        self.assertIn("default-src 'none'", allowed.headers["Content-Security-Policy"])
+        self.assertEqual(client.get("/api/health", headers={"Origin": "https://attacker.example"}).status_code, 403)
+        self.assertEqual(client.options("/api/businesses", headers={"Origin": "https://stratify-demo.example"}).status_code, 204)
+
+    def test_ai_interpretation_uses_database_backed_rate_limit(self):
+        self.app.config["AI_RATE_LIMIT_PER_MINUTE"] = 2
+        request_body = {"messages": [{"role": "user", "content": "Supplier costs increase by 20%"}]}
+        self.assertEqual(self.client.post("/api/businesses/1/scenarios/interpret", json=request_body).status_code, 404)
+        business = self.create_business()
+        path = f"/api/businesses/{business['id']}/scenarios/interpret"
+        for _ in range(2):
+            self.assertEqual(self.client.post(path, json=request_body).status_code, 200)
+        limited = self.client.post(path, json=request_body)
+        self.assertEqual(limited.status_code, 429)
+        self.assertGreaterEqual(int(limited.headers["Retry-After"]), 1)
+        self.assertEqual(limited.get_json(), {"error": "AI request limit reached. Please try again shortly."})
+
+    def test_ai_interpretation_fails_safely_until_rate_limit_migration_is_applied(self):
+        business = self.create_business()
+        AIRateLimit.__table__.drop(get_engine(self.app))
+        response = self.client.post(
+            f"/api/businesses/{business['id']}/scenarios/interpret",
+            json={"messages": [{"role": "user", "content": "Supplier costs increase by 20%"}]},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json(), {"error": "AI scenario service is temporarily unavailable."})
+
+    def test_ai_explanations_share_the_provider_rate_limit(self):
+        business = self.create_business()
+        self.app.config["STRATIFY_DEMO_MODE"] = True
+        self.app.config["AI_RATE_LIMIT_PER_MINUTE"] = 1
+        path = f"/api/businesses/{business['id']}/scenarios/explain"
+        payload = {
+            "scenario": {
+                "title": "Supplier prices rise by 20%",
+                "event_type": "supplier_price_increase",
+                "description": "Supplier costs increase by 20%.",
+                "assumptions": {"supplier_cost_increase_percent": 20},
+                "missing_information": [],
+            },
+            "business_snapshot": self.business_payload(),
+            "confirmed": True,
+        }
+        self.assertEqual(self.client.post(path, json=payload).status_code, 200)
+        limited = self.client.post(path, json=payload)
+        self.assertEqual(limited.status_code, 429)
 
     def business_payload(self):
         return {
@@ -224,7 +360,7 @@ class StratifyApiTests(unittest.TestCase):
         self.assertEqual(saved["supplier_costs"], "40000.00")
 
     def test_demo_reads_and_ai_scenarios_support_legacy_business_table(self):
-        from app.models import Scenario
+        from app.models import AIRateLimit, Scenario
 
         app = create_app({
             "TESTING": True,
@@ -256,6 +392,7 @@ class StratifyApiTests(unittest.TestCase):
                 )
             """))
             Scenario.__table__.create(connection)
+            AIRateLimit.__table__.create(connection)
             connection.execute(text("""
                 INSERT INTO businesses (
                     id, name, industry, location, currency, monthly_revenue,
@@ -288,23 +425,31 @@ class StratifyApiTests(unittest.TestCase):
         self.assertEqual(interpretation.status_code, 200)
         self.assertTrue(interpretation.get_json()["data"]["ready_for_confirmation"])
 
-        created = reviewer.post("/api/businesses/1/scenarios", json={
+        scenario_input = {
             "title": "Supplier prices rise", "event_type": "supplier_price_increase",
-            "assumptions": {"supplier_cost_increase_percent": 20}, "missing_information": [],
+            "description": "Supplier costs increase by 20%", "assumptions": {"supplier_cost_increase_percent": 20},
+            "missing_information": [],
+        }
+        created = reviewer.post("/api/businesses/1/scenarios", json=scenario_input)
+        self.assertEqual(created.status_code, 403)
+        simulated = reviewer.post("/api/businesses/1/scenarios/simulate", json={
+            "scenario": scenario_input, "business_snapshot": snapshot, "confirmed": True,
         })
-        self.assertEqual(created.status_code, 201)
-        scenario_id = created.get_json()["data"]["id"]
-        self.assertEqual(reviewer.post(f"/api/scenarios/{scenario_id}/confirm", json={"confirmed": True}).status_code, 200)
-        simulated = reviewer.post(f"/api/scenarios/{scenario_id}/simulate", json={"business_snapshot": snapshot})
         self.assertEqual(simulated.status_code, 200)
         self.assertEqual(simulated.get_json()["data"]["baseline"]["monthly_revenue"], "150000.00")
         self.assertEqual(simulated.get_json()["data"]["baseline"]["expenses"]["supplier_costs"], "50000.00")
+
+        unconfirmed = reviewer.post("/api/businesses/1/scenarios/simulate", json={
+            "scenario": scenario_input, "business_snapshot": snapshot, "confirmed": False,
+        })
+        self.assertEqual(unconfirmed.status_code, 422)
 
         with engine.connect() as connection:
             stored_values = connection.execute(text(
                 "SELECT monthly_revenue, supplier_costs FROM businesses WHERE id = 1"
             )).one()
         self.assertEqual(tuple(map(str, stored_values)), ("120000", "40000"))
+        self.assertEqual(reviewer.get("/api/businesses/1/scenarios").get_json()["data"], [])
 
     def test_demo_simulation_uses_frontend_snapshot_without_persisting_profile_edits(self):
         business = self.create_business()
@@ -324,6 +469,30 @@ class StratifyApiTests(unittest.TestCase):
         saved = self.client.get(f"/api/businesses/{business['id']}").get_json()["data"]
         self.assertEqual(saved["monthly_revenue"], "120000.00")
         self.assertEqual(saved["supplier_costs"], "40000.00")
+
+    def test_demo_scenario_crud_is_blocked_and_stateless_calculation_uses_snapshot(self):
+        business = self.create_business()
+        self.app.config["STRATIFY_DEMO_MODE"] = True
+        scenario_input = {
+            "title": "Supplier prices rise by 20%",
+            "event_type": "supplier_price_increase",
+            "description": "Supplier costs increase by 20%.",
+            "assumptions": {"supplier_cost_increase_percent": 20},
+            "missing_information": [],
+        }
+        scenario_list = f"/api/businesses/{business['id']}/scenarios"
+        self.assertEqual(self.client.post(scenario_list, json=scenario_input).status_code, 403)
+        self.assertEqual(self.client.get(scenario_list).get_json()["data"], [])
+        payload = {
+            "scenario": scenario_input,
+            "business_snapshot": {**self.business_payload(), "monthly_revenue": "150000", "supplier_costs": "50000"},
+            "confirmed": True,
+        }
+        result = self.client.post(f"{scenario_list}/simulate", json=payload)
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.get_json()["data"]["baseline"]["monthly_revenue"], "150000.00")
+        self.assertEqual(result.get_json()["data"]["estimate"]["expenses"]["supplier_costs"], "60000.00")
+        self.assertEqual(self.client.get(scenario_list).get_json()["data"], [])
 
     def test_business_edits_are_blocked_from_postgresql_in_demo_mode(self):
         business = self.create_business()
