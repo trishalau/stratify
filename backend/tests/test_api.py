@@ -1,5 +1,7 @@
 import unittest
 
+from sqlalchemy import text
+
 from app import create_app
 from app.database import Base, get_engine
 
@@ -182,6 +184,127 @@ class StratifyApiTests(unittest.TestCase):
         self.assertEqual(reviewer.get("/api/businesses").get_json()["data"][0]["id"], business["id"])
         self.assertEqual(reviewer.post("/api/auth/login", json={"username": "owner", "password": "ownpass1234"}).status_code, 404)
         self.assertEqual(reviewer.post("/api/auth/register", json={"username": "reviewer", "password": "reviewer1"}).status_code, 404)
+
+    def test_demo_endpoints_work_without_users_table_or_owner_session(self):
+        business = self.create_business()
+        scenario_response = self.client.post(f"/api/businesses/{business['id']}/scenarios", json={
+            "title": "Supplier prices rise", "event_type": "supplier_price_increase",
+            "assumptions": {"supplier_cost_increase_percent": 10}, "missing_information": [],
+        })
+        self.assertEqual(scenario_response.status_code, 201)
+        scenario_id = scenario_response.get_json()["data"]["id"]
+        self.assertEqual(self.client.post(f"/api/scenarios/{scenario_id}/confirm", json={"confirmed": True}).status_code, 200)
+
+        self.app.config["STRATIFY_DEMO_MODE"] = True
+        engine = get_engine(self.app)
+        from app.models import User
+        User.__table__.drop(engine)
+
+        reviewer = self.app.test_client()
+        self.assertEqual(reviewer.get("/api/auth/session").status_code, 200)
+        listing = reviewer.get("/api/businesses")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.get_json()["data"][0]["name"], "KL Electronics Sdn. Bhd.")
+        self.assertEqual(reviewer.get(f"/api/businesses/{business['id']}").status_code, 200)
+
+        # The live frontend snapshot, rather than the PostgreSQL seed values,
+        # supplies the profile used for the deterministic calculation.
+        snapshot = {**self.business_payload(), "monthly_revenue": "150000", "supplier_costs": "50000"}
+        result = reviewer.post(f"/api/scenarios/{scenario_id}/simulate", json={"business_snapshot": snapshot})
+        self.assertEqual(result.status_code, 200)
+        data = result.get_json()["data"]
+        self.assertEqual(data["baseline"]["monthly_revenue"], "150000.00")
+        self.assertEqual(data["baseline"]["expenses"]["supplier_costs"], "50000.00")
+
+        missing_snapshot = reviewer.post(f"/api/scenarios/{scenario_id}/simulate", json={})
+        self.assertEqual(missing_snapshot.status_code, 422)
+        # Scenario runs may be recorded, but a reviewer profile edit is never saved.
+        saved = reviewer.get(f"/api/businesses/{business['id']}").get_json()["data"]
+        self.assertEqual(saved["monthly_revenue"], "120000.00")
+        self.assertEqual(saved["supplier_costs"], "40000.00")
+
+    def test_demo_reads_and_ai_scenarios_support_legacy_business_table(self):
+        from app.models import Scenario
+
+        app = create_app({
+            "TESTING": True,
+            "DATABASE_URL": "sqlite+pysqlite:///:memory:",
+            "SCENARIO_AI": FakeScenarioAI(),
+            "STRATIFY_DEMO_MODE": True,
+        })
+        engine = get_engine(app)
+        with engine.begin() as connection:
+            # Match the original demo schema: no users table and no owner_id.
+            connection.execute(text("""
+                CREATE TABLE businesses (
+                    id INTEGER PRIMARY KEY,
+                    name VARCHAR(160) NOT NULL,
+                    industry VARCHAR(120) NOT NULL,
+                    location VARCHAR(160) NOT NULL,
+                    currency VARCHAR(3) NOT NULL,
+                    monthly_revenue NUMERIC(14, 2) NOT NULL,
+                    supplier_costs NUMERIC(14, 2) NOT NULL,
+                    rent NUMERIC(14, 2) NOT NULL,
+                    staff_salaries NUMERIC(14, 2) NOT NULL,
+                    other_expenses NUMERIC(14, 2) NOT NULL,
+                    cash_balance NUMERIC(14, 2) NOT NULL,
+                    inventory_value NUMERIC(14, 2),
+                    liabilities NUMERIC(14, 2),
+                    custom_monthly_variables JSON NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                )
+            """))
+            Scenario.__table__.create(connection)
+            connection.execute(text("""
+                INSERT INTO businesses (
+                    id, name, industry, location, currency, monthly_revenue,
+                    supplier_costs, rent, staff_salaries, other_expenses,
+                    cash_balance, inventory_value, liabilities,
+                    custom_monthly_variables, created_at, updated_at
+                ) VALUES (
+                    1, 'KL Electronics Sdn. Bhd.', 'Consumer electronics retail',
+                    'Kuala Lumpur, Malaysia', 'MYR', 120000, 40000, 10000,
+                    20000, 12000, 160000, NULL, NULL, '[]',
+                    '2026-01-01 00:00:00', '2026-01-01 00:00:00'
+                )
+            """))
+
+        reviewer = app.test_client()
+        dashboard_data = reviewer.get("/api/businesses")
+        self.assertEqual(dashboard_data.status_code, 200)
+        self.assertEqual(dashboard_data.get_json()["data"][0]["monthly_revenue"], "120000.00")
+        self.assertEqual(reviewer.get("/api/businesses/1").status_code, 200)
+
+        # Demo edits are frontend-only; this API must not update the seed row.
+        rejected_edit = reviewer.patch("/api/businesses/1", json={"monthly_revenue": "150000"})
+        self.assertEqual(rejected_edit.status_code, 403)
+
+        snapshot = {**self.business_payload(), "monthly_revenue": "150000", "supplier_costs": "50000"}
+        interpretation = reviewer.post("/api/businesses/1/scenarios/interpret", json={
+            "messages": [{"role": "user", "content": "Supplier costs increase 20%"}],
+            "business_snapshot": snapshot,
+        })
+        self.assertEqual(interpretation.status_code, 200)
+        self.assertTrue(interpretation.get_json()["data"]["ready_for_confirmation"])
+
+        created = reviewer.post("/api/businesses/1/scenarios", json={
+            "title": "Supplier prices rise", "event_type": "supplier_price_increase",
+            "assumptions": {"supplier_cost_increase_percent": 20}, "missing_information": [],
+        })
+        self.assertEqual(created.status_code, 201)
+        scenario_id = created.get_json()["data"]["id"]
+        self.assertEqual(reviewer.post(f"/api/scenarios/{scenario_id}/confirm", json={"confirmed": True}).status_code, 200)
+        simulated = reviewer.post(f"/api/scenarios/{scenario_id}/simulate", json={"business_snapshot": snapshot})
+        self.assertEqual(simulated.status_code, 200)
+        self.assertEqual(simulated.get_json()["data"]["baseline"]["monthly_revenue"], "150000.00")
+        self.assertEqual(simulated.get_json()["data"]["baseline"]["expenses"]["supplier_costs"], "50000.00")
+
+        with engine.connect() as connection:
+            stored_values = connection.execute(text(
+                "SELECT monthly_revenue, supplier_costs FROM businesses WHERE id = 1"
+            )).one()
+        self.assertEqual(tuple(map(str, stored_values)), ("120000", "40000"))
 
     def test_demo_simulation_uses_frontend_snapshot_without_persisting_profile_edits(self):
         business = self.create_business()

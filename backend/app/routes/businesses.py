@@ -1,6 +1,5 @@
 from flask import Blueprint, current_app, g, jsonify, request
-from sqlalchemy import select
-
+from ..access import accessible_businesses_query, find_accessible_business
 from ..models import Business
 from ..serializers import business_to_dict
 from ..validation import parse_business_payload
@@ -10,7 +9,11 @@ bp = Blueprint("businesses", __name__)
 
 @bp.get("/businesses")
 def list_businesses():
-    businesses = g.db_session.scalars(select(Business).where(Business.owner_id == g.current_user.id).order_by(Business.name)).all()
+    query = accessible_businesses_query().order_by(Business.name)
+    if current_app.config.get("STRATIFY_DEMO_MODE"):
+        businesses = g.db_session.execute(query).mappings().all()
+    else:
+        businesses = g.db_session.scalars(query).all()
     return jsonify({"data": [business_to_dict(item) for item in businesses]})
 
 
@@ -27,7 +30,7 @@ def create_business():
 
 @bp.get("/businesses/<int:business_id>")
 def get_business(business_id: int):
-    business = g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id))
+    business = find_accessible_business(business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
     return jsonify({"data": business_to_dict(business)})
@@ -37,7 +40,7 @@ def get_business(business_id: int):
 def update_business(business_id: int):
     if current_app.config.get("STRATIFY_DEMO_MODE"):
         return jsonify({"error": "Business profile changes in demo mode are temporary and are not saved to PostgreSQL."}), 403
-    business = g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id))
+    business = find_accessible_business(business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
 
@@ -52,7 +55,7 @@ def update_business(business_id: int):
 def delete_business(business_id: int):
     if current_app.config.get("STRATIFY_DEMO_MODE"):
         return jsonify({"error": "The fictional demo business cannot be deleted in demo mode."}), 403
-    business = g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id))
+    business = find_accessible_business(business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
     g.db_session.delete(business)

@@ -1,6 +1,10 @@
+from collections.abc import Mapping
+from typing import Any
+
 from flask import Blueprint, current_app, g, jsonify, request
 from sqlalchemy import select
 
+from ..access import DEMO_BUSINESS_NAME, find_accessible_business
 from ..models import Business, Scenario, utc_now
 from ..serializers import business_to_dict, scenario_to_dict
 from ..validation import RequestValidationError, parse_business_payload, parse_scenario_payload
@@ -42,16 +46,23 @@ def _parse_chat_messages(payload):
 
 
 def _find_scenario(scenario_id: int) -> Scenario | None:
-    return g.db_session.scalar(
-        select(Scenario).join(Business, Scenario.business_id == Business.id)
-        .where(Scenario.id == scenario_id, Business.owner_id == g.current_user.id)
-    )
+    query = select(Scenario).join(Business, Scenario.business_id == Business.id).where(Scenario.id == scenario_id)
+    if current_app.config.get("STRATIFY_DEMO_MODE"):
+        query = query.where(Business.name == DEMO_BUSINESS_NAME)
+    else:
+        query = query.where(Business.owner_id == g.current_user.id)
+    return g.db_session.scalar(query)
 
 
-def _business_snapshot(payload, business: Business):
+def _business_snapshot(payload, business: Business | Mapping[str, Any]):
+    demo_mode = current_app.config.get("STRATIFY_DEMO_MODE")
     if payload is None:
+        if demo_mode:
+            raise RequestValidationError("A current business snapshot is required in demo mode.", {
+                "business_snapshot": "Send the values currently shown in the demo business profile."
+            })
         return business_to_dict(business)
-    if not current_app.config.get("STRATIFY_DEMO_MODE"):
+    if not demo_mode:
         raise RequestValidationError("Business snapshots are only accepted in demo mode.")
     clean = parse_business_payload(payload)
     snapshot = business_to_dict(business)
@@ -61,7 +72,7 @@ def _business_snapshot(payload, business: Business):
 
 @bp.get("/businesses/<int:business_id>/scenarios")
 def list_scenarios(business_id: int):
-    if g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id)) is None:
+    if find_accessible_business(business_id) is None:
         return jsonify({"error": "Business not found."}), 404
     items = g.db_session.scalars(
         select(Scenario)
@@ -73,7 +84,7 @@ def list_scenarios(business_id: int):
 
 @bp.post("/businesses/<int:business_id>/scenarios")
 def create_scenario(business_id: int):
-    if g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id)) is None:
+    if find_accessible_business(business_id) is None:
         return jsonify({"error": "Business not found."}), 404
     payload = parse_scenario_payload(request.get_json(silent=True))
     scenario = Scenario(business_id=business_id, **payload, status="draft")
@@ -84,7 +95,7 @@ def create_scenario(business_id: int):
 
 @bp.post("/businesses/<int:business_id>/scenarios/interpret")
 def interpret_scenario(business_id: int):
-    business = g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id))
+    business = find_accessible_business(business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
     payload = request.get_json(silent=True)
@@ -199,7 +210,7 @@ def run_scenario(scenario_id: int):
     if scenario.missing_information:
         return jsonify({"error": "Resolve missing information before simulating."}), 409
 
-    business = g.db_session.get(Business, scenario.business_id)
+    business = find_accessible_business(scenario.business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
 
@@ -220,7 +231,7 @@ def explain_scenario(scenario_id: int):
         return jsonify({"error": "Scenario not found."}), 404
     if scenario.status != "confirmed":
         return jsonify({"error": "Confirm scenario assumptions before requesting an explanation."}), 409
-    business = g.db_session.get(Business, scenario.business_id)
+    business = find_accessible_business(scenario.business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
 

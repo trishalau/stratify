@@ -52,9 +52,6 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.get("/api/auth/session")
     def auth_session():
         if app.config["STRATIFY_DEMO_MODE"]:
-            demo_user = g.db_session.scalar(select(User).where(User.username == app.config["STRATIFY_DEMO_OWNER_USERNAME"]))
-            if demo_user is None:
-                return jsonify({"error": "Demo owner account is not configured. Set STRATIFY_DEMO_OWNER_USERNAME and seed the demo business."}), 503
             return jsonify({"authenticated": True, "demo_mode": True, "username": "Demo reviewer"})
         user = g.db_session.get(User, session.get("user_id")) if session.get("user_id") else None
         return jsonify({"authenticated": user is not None, "username": user.username if user else None})
@@ -164,10 +161,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         if request.path in {"/api/health", "/api/auth/session", "/api/auth/register", "/api/auth/login", "/api/auth/logout"}:
             return
         if app.config["STRATIFY_DEMO_MODE"]:
-            demo_user = g.db_session.scalar(select(User).where(User.username == app.config["STRATIFY_DEMO_OWNER_USERNAME"]))
-            if demo_user is None:
-                return jsonify({"error": "Demo owner account is not configured."}), 503
-            g.current_user = demo_user
+            # The single-business demo is intentionally public and does not depend
+            # on the users table. Its routes scope access to the named demo record.
             return
         user = g.db_session.get(User, session.get("user_id")) if session.get("user_id") else None
         if user is None:
