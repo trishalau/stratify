@@ -86,10 +86,14 @@ export type SavedScenario = {
   created_at: string
 }
 
+// VITE_API_BASE_URL is a public API origin, never a secret. Leave it unset
+// during local development to use Vite's same-origin /api proxy.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '')
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let response: Response
   try {
-    response = await fetch(url, {
+    response = await fetch(`${API_BASE_URL}${url}`, {
       ...init,
       headers: { 'Content-Type': 'application/json', ...init?.headers },
     })

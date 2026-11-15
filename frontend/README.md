@@ -1,6 +1,6 @@
 # Stratify
 
-Phase 1 frontend prototype for an SME business scenario planner. The app uses fictional data for KL Electronics Sdn. Bhd. and keeps all edits in the browser session.
+React and TypeScript frontend for the Stratify business scenario simulator. The app uses fictional KL Electronics Sdn. Bhd. data and keeps profile edits in shared in-memory state. Edits survive client-side navigation and reset on a full page refresh.
 
 ## Run locally
 
@@ -11,6 +11,18 @@ npm run dev
 
 Vite prints the local URL after startup. Build the production bundle with `npm run build` and run the configured lint checks with `npm run lint`.
 
+## API configuration
+
+The frontend sends API requests to `VITE_API_BASE_URL` when it is set. Configure it as the backend origin only, for example `https://your-backend-project.vercel.app` (do not add `/api`). This value is included in the public frontend bundle, so it must never contain a key, password, or database URL.
+
+For local development, leave `VITE_API_BASE_URL` blank or unset. Vite proxies `/api` requests to Flask at `http://127.0.0.1:5000`.
+
+## Vercel frontend project
+
+Connect the repository to Vercel and set the project root to `frontend`. Use `npm run build` as the build command and `dist` as the output directory. Configure `VITE_API_BASE_URL` separately for Preview and Production to point at the corresponding backend deployment. `vercel.json` rewrites page routes to `index.html`, allowing React Router pages to load when opened directly or refreshed.
+
+The only frontend environment variable is the public API origin. Configure `DATABASE_URL`, `GEMINI_API_KEY`, Flask secrets, and demo-mode settings only in the backend project's environment.
+
 ## Frontend stack
 
 - React and TypeScript with Vite
@@ -18,6 +30,6 @@ Vite prints the local URL after startup. Build the production bundle with `npm r
 - React Router for page navigation
 - Recharts for dashboard and result-preview charts
 
-## Phase 1 scope
+## Application pages
 
-The frontend includes the dashboard, business profile, scenario simulator, result preview, history, and settings. The scenario confirmation step is interactive, but it does not run a financial calculation. The result page is a fixed supplier-cost illustration, clearly separated from user-entered assumptions. AI interpretation, persistent storage, APIs, and the Python financial engine belong to later phases.
+The frontend includes the dashboard, business profile, scenario simulator, simulation results, scenario history, and settings. The shared demo business context is the single source of truth for visible business data. Profile changes remain in memory and are sent as validated snapshots for scenario requests; they are not persisted by the frontend.
