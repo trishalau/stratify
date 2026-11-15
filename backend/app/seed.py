@@ -6,14 +6,17 @@ from sqlalchemy.orm import Session
 from .models import Business
 
 
-def seed_demo_business(session: Session) -> Business:
+def seed_demo_business(session: Session, owner_id: int) -> Business:
     existing = session.scalar(
         select(Business).where(Business.name == "KL Electronics Sdn. Bhd.")
     )
     if existing:
+        if existing.owner_id != owner_id:
+            raise ValueError("The demo business already belongs to another account.")
         return existing
 
     business = Business(
+        owner_id=owner_id,
         name="KL Electronics Sdn. Bhd.",
         industry="Consumer electronics retail",
         location="Kuala Lumpur, Malaysia",

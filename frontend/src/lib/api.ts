@@ -117,6 +117,19 @@ export const interpretScenario = (businessId: number, messages: ChatMessage[]) =
     method: 'POST', body: JSON.stringify({ messages }),
   })
 
+export const interpretScenarioWithDemoProfile = (businessId: number, messages: ChatMessage[], business: Business) =>
+  request<ScenarioInterpretation>(`/api/businesses/${businessId}/scenarios/interpret`, {
+    method: 'POST', body: JSON.stringify({ messages, business_snapshot: businessSnapshot(business) }),
+  })
+
+export const businessSnapshot = (business: Business) => ({
+  name: business.name, industry: business.industry, location: business.location, currency: business.currency,
+  monthly_revenue: business.monthly_revenue, supplier_costs: business.supplier_costs, rent: business.rent,
+  staff_salaries: business.staff_salaries, other_expenses: business.other_expenses, cash_balance: business.cash_balance,
+  inventory_value: business.inventory_value, liabilities: business.liabilities,
+  custom_monthly_variables: business.custom_monthly_variables,
+})
+
 export const createScenario = (businessId: number, input: {
   title: string
   event_type: string
@@ -132,10 +145,10 @@ export const confirmScenario = (scenarioId: number) =>
     method: 'POST', body: JSON.stringify({ confirmed: true }),
   })
 
-export const simulateScenario = (scenarioId: number) =>
-  request<SimulationCalculation>(`/api/scenarios/${scenarioId}/simulate`, { method: 'POST' })
+export const simulateScenario = (scenarioId: number, business: Business) =>
+  request<SimulationCalculation>(`/api/scenarios/${scenarioId}/simulate`, { method: 'POST', body: JSON.stringify({ business_snapshot: businessSnapshot(business) }) })
 
-export const explainScenario = (scenarioId: number) =>
+export const explainScenario = (scenarioId: number, business: Business) =>
   request<{ calculation: SimulationCalculation; explanation: ScenarioExplanation }>(
-    `/api/scenarios/${scenarioId}/explain`, { method: 'POST' },
+    `/api/scenarios/${scenarioId}/explain`, { method: 'POST', body: JSON.stringify({ business_snapshot: businessSnapshot(business) }) },
   )

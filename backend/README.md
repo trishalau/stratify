@@ -11,6 +11,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
+# Edit .env and set a random STRATIFY_SESSION_SECRET before starting the API.
 docker compose up -d db
 flask --app run:app init-db
 flask --app run:app seed-demo
@@ -20,6 +21,31 @@ python run.py
 The local PostgreSQL service uses the development-only credentials in `compose.yaml`. Keep those credentials local; replace them with managed secrets for any deployed environment. `DATABASE_URL` is read from `.env` and must point to PostgreSQL for a normal run.
 
 The API is served at `http://127.0.0.1:5000/api`. `GET /api/health` checks the database connection. Amounts are returned as decimal strings to avoid losing cents through JSON floating-point conversion. Unknown inventory and liabilities remain `null`.
+
+For a reviewer-facing hackathon demo, `STRATIFY_DEMO_MODE` defaults to `true` (set it to `false` to use the preserved sign-in flow). Reviewers open directly to the dashboard. Backend reads still scope to `STRATIFY_DEMO_OWNER_USERNAME`, so that account and demo business must exist and belong together. Registration and sign-in endpoints are disabled in demo mode; no database rows or authentication code are removed.
+
+Demo profile edits live only in the React business context and reset to the original sample values on refresh. Scenario interpretation, simulation and explanation requests send a validated snapshot of that in-memory profile; they do not write profile edits to PostgreSQL. Business create, update and delete API routes are blocked in demo mode to protect the PostgreSQL seed. Scenario records remain saved as before. Keep database and Gemini credentials only in this backend `.env`; never define them as Vite environment variables.
+
+Users can create accounts from the sign-in screen. Passwords are stored as Werkzeug password hashes; responses never include passwords or hashes. Set `STRATIFY_SESSION_SECRET` to a long random value and do not use the example placeholder. The browser receives only a signed, HttpOnly, SameSite=Lax session cookie. Cookies are non-Secure for local HTTP; set `STRATIFY_COOKIE_SECURE=true` when serving over HTTPS. `/api/health` and auth endpoints are public; business and scenario endpoints require an authenticated session. Passwords must be 6–12 characters for the current prototype. Account recovery and email verification are not implemented.
+
+### Ownership migration for an existing database
+
+Back up the database before applying schema changes. Do not run `init-db` as a substitute for these migrations; `create_all` does not alter existing tables.
+
+1. Apply `migrations/20261116_add_business_owner_nullable.sql`. Existing rows and scenario records are preserved; the new owner field is nullable temporarily.
+2. Choose the account that should own the existing, previously shared business data. Backfill explicitly, replacing the username below with that account:
+
+   ```sql
+   UPDATE businesses
+   SET owner_id = (SELECT id FROM users WHERE username = 'your-chosen-username')
+   WHERE owner_id IS NULL;
+   ```
+
+   Confirm the username exists and that no businesses remain unowned. All scenarios remain with their businesses through their existing foreign keys.
+3. Apply `migrations/20261117_require_business_owner.sql`. It refuses to proceed if any business remains unowned, then makes ownership mandatory.
+4. Set `STRATIFY_DEMO_OWNER_USERNAME` to the account that should own a newly seeded demo business before running `flask --app run:app seed-demo`.
+
+The API derives ownership from the authenticated session. It ignores no ownership input because `owner_id` is rejected as an unsupported business field. Cross-account resource access returns 404 to avoid disclosing another account's records. Deleting an owned business deletes its dependent scenarios by the existing cascade; deleting a user with businesses is restricted.
 
 ## API routes
 

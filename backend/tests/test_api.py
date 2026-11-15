@@ -69,10 +69,13 @@ class StratifyApiTests(unittest.TestCase):
                 "TESTING": True,
                 "DATABASE_URL": "sqlite+pysqlite:///:memory:",
                 "SCENARIO_AI": FakeScenarioAI(),
+                "SECRET_KEY": "test-only-session-secret",
+                "STRATIFY_DEMO_MODE": False,
             }
         )
         Base.metadata.create_all(get_engine(self.app))
         self.client = self.app.test_client()
+        self.client.post("/api/auth/register", json={"username": "owner", "password": "ownpass1234"})
 
     def business_payload(self):
         return {
@@ -91,6 +94,121 @@ class StratifyApiTests(unittest.TestCase):
         response = self.client.post("/api/businesses", json=self.business_payload())
         self.assertEqual(response.status_code, 201)
         return response.get_json()["data"]
+
+    def test_owner_login_logout_and_protected_api(self):
+        client = self.app.test_client()
+        denied = client.get("/api/businesses")
+        self.assertEqual(denied.status_code, 401)
+        self.assertEqual(client.get("/api/health").status_code, 200)
+
+        bad_login = client.post("/api/auth/login", json={"username": "owner", "password": "wrong12"})
+        self.assertEqual(bad_login.status_code, 401)
+        self.assertNotIn("wrong12", bad_login.get_data(as_text=True))
+
+        client.post("/api/auth/register", json={"username": "owner", "password": "ownpass1234"})
+        good_login = client.post("/api/auth/login", json={"username": "owner", "password": "ownpass1234"})
+        self.assertEqual(good_login.status_code, 200)
+        cookie = client.get_cookie("session")
+        self.assertIsNotNone(cookie)
+        self.assertTrue(cookie.http_only)
+        self.assertEqual(cookie.same_site, "Lax")
+        self.assertFalse(cookie.secure)
+        self.assertEqual(client.get("/api/businesses").status_code, 200)
+
+        logout = client.post("/api/auth/logout")
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(client.get("/api/businesses").status_code, 401)
+
+    def test_registration_hashes_password_and_rejects_duplicate_or_weak_credentials(self):
+        client = self.app.test_client()
+        bad = client.post("/api/auth/register", json={"username": "xy", "password": "tiny"})
+        self.assertEqual(bad.status_code, 422)
+        created = client.post("/api/auth/register", json={"username": "new_owner", "password": "newpass1234"})
+        self.assertEqual(created.status_code, 201)
+        self.assertNotIn("password", created.get_data(as_text=True).lower())
+        duplicate = self.app.test_client().post("/api/auth/register", json={"username": "new_owner", "password": "otherpass12"})
+        self.assertEqual(duplicate.status_code, 409)
+        from app.models import User
+        user = self.client.application.extensions["stratify_session_factory"]().query(User).filter_by(username="new_owner").one()
+        self.assertNotEqual(user.password_hash, "newpass1234")
+
+    def test_users_cannot_access_other_users_businesses_or_scenarios(self):
+        user_b = self.app.test_client()
+        registration = user_b.post("/api/auth/register", json={"username": "owner_b", "password": "ownerb123"})
+        self.assertEqual(registration.status_code, 201)
+        business_response = user_b.post("/api/businesses", json=self.business_payload())
+        self.assertEqual(business_response.status_code, 201)
+        business_b = business_response.get_json()["data"]
+        scenario_response = user_b.post(f"/api/businesses/{business_b['id']}/scenarios", json={
+            "title": "Supplier costs rise", "event_type": "supplier_price_increase",
+            "assumptions": {"supplier_cost_increase_percent": 10}, "missing_information": [],
+        })
+        self.assertEqual(scenario_response.status_code, 201)
+        scenario_id = scenario_response.get_json()["data"]["id"]
+
+        self.assertEqual(self.client.get(f"/api/businesses/{business_b['id']}").status_code, 404)
+        self.assertEqual(self.client.patch(f"/api/businesses/{business_b['id']}", json={"name": "Hijacked"}).status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/businesses/{business_b['id']}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/businesses/{business_b['id']}/scenarios").status_code, 404)
+        for method, path, kwargs in (
+            (self.client.get, f"/api/scenarios/{scenario_id}", {}),
+            (self.client.delete, f"/api/scenarios/{scenario_id}", {}),
+            (self.client.patch, f"/api/scenarios/{scenario_id}", {"json": {"title": "Hijacked"}}),
+            (self.client.post, f"/api/scenarios/{scenario_id}/confirm", {"json": {"confirmed": True}}),
+            (self.client.post, f"/api/scenarios/{scenario_id}/simulate", {}),
+            (self.client.post, f"/api/scenarios/{scenario_id}/explain", {}),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(method(path, **kwargs).status_code, 404)
+
+        still_owned = user_b.get(f"/api/businesses/{business_b['id']}")
+        self.assertEqual(still_owned.status_code, 200)
+        self.assertEqual(still_owned.get_json()["data"]["name"], "KL Electronics Sdn. Bhd.")
+
+    def test_client_cannot_set_business_owner_id(self):
+        payload = self.business_payload()
+        payload["owner_id"] = 999
+        response = self.client.post("/api/businesses", json=payload)
+        self.assertEqual(response.status_code, 422)
+
+    def test_demo_mode_skips_login_but_scopes_requests_to_demo_owner(self):
+        business = self.create_business()
+        self.app.config["STRATIFY_DEMO_MODE"] = True
+        reviewer = self.app.test_client()
+        status = reviewer.get("/api/auth/session")
+        self.assertEqual(status.status_code, 200)
+        self.assertTrue(status.get_json()["authenticated"])
+        self.assertTrue(status.get_json()["demo_mode"])
+        self.assertEqual(reviewer.get("/api/businesses").get_json()["data"][0]["id"], business["id"])
+        self.assertEqual(reviewer.post("/api/auth/login", json={"username": "owner", "password": "ownpass1234"}).status_code, 404)
+        self.assertEqual(reviewer.post("/api/auth/register", json={"username": "reviewer", "password": "reviewer1"}).status_code, 404)
+
+    def test_demo_simulation_uses_frontend_snapshot_without_persisting_profile_edits(self):
+        business = self.create_business()
+        scenario_response = self.client.post(f"/api/businesses/{business['id']}/scenarios", json={
+            "title": "Supplier prices rise", "event_type": "supplier_price_increase",
+            "assumptions": {"supplier_cost_increase_percent": 10}, "missing_information": [],
+        })
+        scenario_id = scenario_response.get_json()["data"]["id"]
+        self.client.post(f"/api/scenarios/{scenario_id}/confirm", json={"confirmed": True})
+        self.app.config["STRATIFY_DEMO_MODE"] = True
+        snapshot = {**self.business_payload(), "monthly_revenue": "150000", "supplier_costs": "50000"}
+        result = self.client.post(f"/api/scenarios/{scenario_id}/simulate", json={"business_snapshot": snapshot})
+        self.assertEqual(result.status_code, 200)
+        data = result.get_json()["data"]
+        self.assertEqual(data["baseline"]["monthly_revenue"], "150000.00")
+        self.assertEqual(data["baseline"]["expenses"]["supplier_costs"], "50000.00")
+        saved = self.client.get(f"/api/businesses/{business['id']}").get_json()["data"]
+        self.assertEqual(saved["monthly_revenue"], "120000.00")
+        self.assertEqual(saved["supplier_costs"], "40000.00")
+
+    def test_business_edits_are_blocked_from_postgresql_in_demo_mode(self):
+        business = self.create_business()
+        self.app.config["STRATIFY_DEMO_MODE"] = True
+        response = self.client.patch(f"/api/businesses/{business['id']}", json={"monthly_revenue": "999999"})
+        self.assertEqual(response.status_code, 403)
+        unchanged = self.client.get(f"/api/businesses/{business['id']}").get_json()["data"]
+        self.assertEqual(unchanged["monthly_revenue"], "120000.00")
 
     def test_business_create_and_patch(self):
         created = self.create_business()

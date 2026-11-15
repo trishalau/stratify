@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Link, useLocation } from 'react-router-dom'
 import { Button, Card, DemoNotice, PageHeader } from '../components/ui'
+import { useDemoBusiness } from '../components/demo-business-context'
 import { demoResult } from '../data/demo-data'
 import { explainScenario, type ScenarioExplanation, type SimulationCalculation } from '../lib/api'
 
@@ -14,6 +15,7 @@ export default function Results() {
 }
 
 function LiveResults({ calculation, scenarioId }: { calculation: SimulationCalculation; scenarioId: number }) {
+  const { business } = useDemoBusiness()
   const [explanation, setExplanation] = useState<ScenarioExplanation | null>(null)
   const [explanationError, setExplanationError] = useState('')
   const [loadingExplanation, setLoadingExplanation] = useState(true)
@@ -36,16 +38,16 @@ function LiveResults({ calculation, scenarioId }: { calculation: SimulationCalcu
 
   useEffect(() => {
     let active = true
-    explainScenario(scenarioId)
+    explainScenario(scenarioId, business)
       .then((result) => { if (active) setExplanation(result.explanation) })
       .catch((error: Error) => { if (active) setExplanationError(error.message) })
       .finally(() => { if (active) setLoadingExplanation(false) })
     return () => { active = false }
-  }, [scenarioId])
+  }, [scenarioId, business])
 
   return <>
     <PageHeader eyebrow="DETERMINISTIC SCENARIO ESTIMATE" title="Scenario results" description="A hypothetical monthly comparison calculated from your confirmed assumptions." action={<Button variant="ghost" size="sm" onClick={() => window.print()}><Download size={15} /> Print / PDF</Button>} />
-    <DemoNotice>Estimate based on confirmed inputs and saved demonstration business data. This is not a guaranteed prediction or financial advice.</DemoNotice>
+    <DemoNotice>Estimate based on confirmed assumptions and your current in-memory demo values. Refreshing restores the original fictional sample data. This is not a guaranteed prediction or financial advice.</DemoNotice>
     <div className="result-title-row"><div><span className="result-event-icon"><ArrowDownRight size={18} /></span><div><div className="eyebrow">SAVED SCENARIO · #{scenarioId}</div><h2>{calculation.title}</h2><span className="result-date">Monthly estimate <i /> {calculation.status}</span></div></div><Link className="back-link result-back" to="/simulator"><ArrowLeft size={14} /> New scenario</Link></div>
     <div className="result-stat-grid">{metrics.map((metric) => {
       const delta = Number(metric.after) - Number(metric.before)

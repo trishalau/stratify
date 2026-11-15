@@ -2,7 +2,8 @@ import { ArrowDownRight, ArrowRight, ArrowUpRight, CircleHelp, Clock3, CreditCar
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Link } from 'react-router-dom'
 import { Card, DemoNotice, PageHeader, Button } from '../components/ui'
-import { business, money, monthlyTrend, recentScenarios } from '../data/demo-data'
+import { money, monthlyTrend, recentScenarios } from '../data/demo-data'
+import { useDemoBusiness } from '../components/demo-business-context'
 
 function MetricCard({ label, value, change, icon: Icon, tone, footnote }: { label: string; value: string; change: string; icon: typeof Wallet; tone: string; footnote: string }) {
   return <Card className="metric-card">
@@ -13,14 +14,18 @@ function MetricCard({ label, value, change, icon: Icon, tone, footnote }: { labe
 }
 
 export default function Dashboard() {
+  const { business } = useDemoBusiness()
+  const revenue = Number(business.monthly_revenue)
+  const expenses = Number(business.supplier_costs) + Number(business.rent) + Number(business.staff_salaries) + Number(business.other_expenses) + business.custom_monthly_variables.reduce((sum, item) => sum + Number(item.value), 0)
+  const profit = revenue - expenses
   return <>
     <PageHeader eyebrow="SATURDAY, NOVEMBER 14, 2026" title="Good morning, Alex" description="Here’s the latest snapshot of your business." action={<Button to="/simulator"><Plus size={16} /> New simulation</Button>} />
     <DemoNotice />
     <div className="metric-grid">
-      <MetricCard label="Monthly revenue" value={money(business.revenue)} change="5.3%" icon={ArrowUpRight} tone="positive" footnote="vs. last month" />
-      <MetricCard label="Monthly expenses" value={money(business.expenses)} change="2.1%" icon={CreditCard} tone="negative" footnote="vs. last month" />
-      <MetricCard label="Net profit" value={money(business.profit)} change="8.7%" icon={ArrowUpRight} tone="positive" footnote="vs. last month" />
-      <MetricCard label="Cash balance" value={money(business.cash)} change="3.2%" icon={Wallet} tone="positive" footnote="vs. last month" />
+      <MetricCard label="Monthly revenue" value={money(revenue)} change="—" icon={ArrowUpRight} tone="positive" footnote="demo value" />
+      <MetricCard label="Monthly expenses" value={money(expenses)} change="—" icon={CreditCard} tone="negative" footnote="demo value" />
+      <MetricCard label="Net profit" value={money(profit)} change="—" icon={ArrowUpRight} tone={profit >= 0 ? 'positive' : 'negative'} footnote="demo value" />
+      <MetricCard label="Cash balance" value={money(Number(business.cash_balance))} change="—" icon={Wallet} tone="positive" footnote="demo value" />
     </div>
 
     <div className="dashboard-grid">
@@ -42,8 +47,8 @@ export default function Dashboard() {
         <div className="position-meter"><span style={{ width: '65%' }} /></div>
         <div className="position-range"><span>0 months</span><span>3 months recommended</span></div>
         <div className="position-separator" />
-        <div className="position-row"><span><i className="position-dot cash-dot" />Cash available</span><strong>{money(business.cash)}</strong></div>
-        <div className="position-row"><span><i className="position-dot profit-dot" />Monthly net profit</span><strong>{money(business.profit)}</strong></div>
+        <div className="position-row"><span><i className="position-dot cash-dot" />Cash available</span><strong>{money(Number(business.cash_balance))}</strong></div>
+        <div className="position-row"><span><i className="position-dot profit-dot" />Monthly net profit</span><strong>{money(profit)}</strong></div>
         <div className="position-hint"><Clock3 size={13} /> Based on demo business information</div>
       </Card>
     </div>

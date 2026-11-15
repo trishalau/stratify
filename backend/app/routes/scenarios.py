@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from ..models import Business, Scenario, utc_now
 from ..serializers import business_to_dict, scenario_to_dict
-from ..validation import RequestValidationError, parse_scenario_payload
+from ..validation import RequestValidationError, parse_business_payload, parse_scenario_payload
 from ..ai_contracts import AIOutputValidationError, validate_explanation, validate_interpretation
 from ..ai_provider import AIConfigurationError, AIIntegrationError
 from stratify_engine import FinancialEngineError, simulate_scenario
@@ -42,12 +42,26 @@ def _parse_chat_messages(payload):
 
 
 def _find_scenario(scenario_id: int) -> Scenario | None:
-    return g.db_session.get(Scenario, scenario_id)
+    return g.db_session.scalar(
+        select(Scenario).join(Business, Scenario.business_id == Business.id)
+        .where(Scenario.id == scenario_id, Business.owner_id == g.current_user.id)
+    )
+
+
+def _business_snapshot(payload, business: Business):
+    if payload is None:
+        return business_to_dict(business)
+    if not current_app.config.get("STRATIFY_DEMO_MODE"):
+        raise RequestValidationError("Business snapshots are only accepted in demo mode.")
+    clean = parse_business_payload(payload)
+    snapshot = business_to_dict(business)
+    snapshot.update(clean)
+    return snapshot
 
 
 @bp.get("/businesses/<int:business_id>/scenarios")
 def list_scenarios(business_id: int):
-    if g.db_session.get(Business, business_id) is None:
+    if g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id)) is None:
         return jsonify({"error": "Business not found."}), 404
     items = g.db_session.scalars(
         select(Scenario)
@@ -59,7 +73,7 @@ def list_scenarios(business_id: int):
 
 @bp.post("/businesses/<int:business_id>/scenarios")
 def create_scenario(business_id: int):
-    if g.db_session.get(Business, business_id) is None:
+    if g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id)) is None:
         return jsonify({"error": "Business not found."}), 404
     payload = parse_scenario_payload(request.get_json(silent=True))
     scenario = Scenario(business_id=business_id, **payload, status="draft")
@@ -70,11 +84,14 @@ def create_scenario(business_id: int):
 
 @bp.post("/businesses/<int:business_id>/scenarios/interpret")
 def interpret_scenario(business_id: int):
-    business = g.db_session.get(Business, business_id)
+    business = g.db_session.scalar(select(Business).where(Business.id == business_id, Business.owner_id == g.current_user.id))
     if business is None:
         return jsonify({"error": "Business not found."}), 404
-    messages, user_text = _parse_chat_messages(request.get_json(silent=True))
-    profile = business_to_dict(business)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or set(payload) - {"messages", "business_snapshot"}:
+        raise RequestValidationError("Request must contain messages and an optional demo business snapshot.")
+    messages, user_text = _parse_chat_messages({"messages": payload.get("messages")})
+    profile = _business_snapshot(payload.get("business_snapshot"), business)
     custom_names = [item["name"] for item in profile.get("custom_monthly_variables", [])]
     available_fields = [name for name, value in profile.items() if value is not None and name not in {"id", "created_at", "updated_at"}] + custom_names
 
@@ -114,6 +131,16 @@ def get_scenario(scenario_id: int):
     if scenario is None:
         return jsonify({"error": "Scenario not found."}), 404
     return jsonify({"data": scenario_to_dict(scenario)})
+
+
+@bp.delete("/scenarios/<int:scenario_id>")
+def delete_scenario(scenario_id: int):
+    scenario = _find_scenario(scenario_id)
+    if scenario is None:
+        return jsonify({"error": "Scenario not found."}), 404
+    g.db_session.delete(scenario)
+    g.db_session.commit()
+    return "", 204
 
 
 @bp.patch("/scenarios/<int:scenario_id>")
@@ -177,7 +204,10 @@ def run_scenario(scenario_id: int):
         return jsonify({"error": "Business not found."}), 404
 
     try:
-        result = simulate_scenario(business_to_dict(business), scenario_to_dict(scenario))
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict) or set(payload) - {"business_snapshot"}:
+            raise RequestValidationError("Only a business snapshot may be supplied to simulation.")
+        result = simulate_scenario(_business_snapshot(payload.get("business_snapshot"), business), scenario_to_dict(scenario))
     except FinancialEngineError as error:
         return jsonify({"error": str(error), "fields": {error.field: str(error)}}), 422
     return jsonify({"data": result})
@@ -195,7 +225,10 @@ def explain_scenario(scenario_id: int):
         return jsonify({"error": "Business not found."}), 404
 
     try:
-        calculation = simulate_scenario(business_to_dict(business), scenario_to_dict(scenario))
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict) or set(payload) - {"business_snapshot"}:
+            raise RequestValidationError("Only a business snapshot may be supplied to explanation.")
+        calculation = simulate_scenario(_business_snapshot(payload.get("business_snapshot"), business), scenario_to_dict(scenario))
     except FinancialEngineError as error:
         return jsonify({"error": str(error), "fields": {error.field: str(error)}}), 422
     try:

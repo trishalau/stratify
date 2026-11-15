@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { ArrowRight, Check, ChevronLeft, CircleHelp, LoaderCircle, MessageSquareText, Sparkles } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { Button, Card, DemoNotice, Field, PageHeader } from '../components/ui'
-import { getBusinessProfile, money, scenarios } from '../data/demo-data'
+import { useDemoBusiness } from '../components/demo-business-context'
+import { money, scenarios } from '../data/demo-data'
 import { Activity, Landmark, Package, Store, Target, TrendingDown, UserRoundX } from 'lucide-react'
-import { confirmScenario, createScenario, interpretScenario, listBusinesses, simulateScenario, type Business, type ChatMessage, type ScenarioInterpretation } from '../lib/api'
+import { confirmScenario, createScenario, interpretScenarioWithDemoProfile, listBusinesses, simulateScenario, type ChatMessage, type ScenarioInterpretation } from '../lib/api'
 
 const icons = { package: Package, 'trending-down': TrendingDown, 'user-round-x': UserRoundX, target: Target, landmark: Landmark, store: Store }
 
@@ -41,13 +42,12 @@ export default function Simulator() {
   const [customEvent, setCustomEvent] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [interpretation, setInterpretation] = useState<ScenarioInterpretation | null>(null)
-  const [business, setBusiness] = useState<Business | null>(null)
+  const { business, setBusiness } = useDemoBusiness()
   const [apiError, setApiError] = useState('')
   const [busy, setBusy] = useState(false)
   const [interpretationConfirmed, setInterpretationConfirmed] = useState(false)
   const [expenseMapping, setExpenseMapping] = useState('')
   const navigate = useNavigate()
-  const profile = getBusinessProfile()
   const active = scenarios.find((scenario) => scenario.id === selected) ?? scenarios[0]
   const activeTemplate = templates[selected]
   const Icon = icons[active.icon as keyof typeof icons] ?? Activity
@@ -58,10 +58,10 @@ export default function Simulator() {
       .then((items) => {
         const demoBusiness = items.find((item) => item.name === 'KL Electronics Sdn. Bhd.') ?? items[0]
         if (!demoBusiness) throw new Error('No saved business was found. Add a business profile before creating a scenario.')
-        setBusiness(demoBusiness)
+        setBusiness((current) => ({ ...current, id: demoBusiness.id }))
       })
       .catch((error: Error) => setApiError(error.message))
-  }, [])
+  }, [setBusiness])
 
   const reviewCustomEvent = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -76,7 +76,7 @@ export default function Simulator() {
     setApiError('')
     setBusy(true)
     try {
-      const result = await interpretScenario(business.id, updatedMessages)
+      const result = await interpretScenarioWithDemoProfile(business.id, updatedMessages, business)
       setInterpretation(result)
       const assistantText = [result.summary, ...result.follow_up_questions].join('\n')
       setChatMessages([...updatedMessages, { role: 'assistant', content: assistantText }])
@@ -99,7 +99,7 @@ export default function Simulator() {
     setApiError('')
     setBusy(true)
     try {
-      const result = await interpretScenario(business.id, updatedMessages)
+      const result = await interpretScenarioWithDemoProfile(business.id, updatedMessages, business)
       setInterpretation(result)
       const assistantText = [result.summary, ...result.follow_up_questions].join('\n')
       setChatMessages([...updatedMessages, { role: 'assistant', content: assistantText }])
@@ -134,10 +134,35 @@ export default function Simulator() {
         missing_information: [],
       })
       await confirmScenario(scenario.id)
-      const calculation = await simulateScenario(scenario.id)
+      const calculation = await simulateScenario(scenario.id, business)
       navigate('/results', { state: { calculation, scenarioId: scenario.id } })
     } catch (error) {
       setApiError(error instanceof Error ? error.message : 'Could not run the confirmed scenario.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runTemplateScenario = async () => {
+    if (!confirmed || busy || !business || !['supplier', 'sales'].includes(selected)) return
+    const value = Number(assumption)
+    if (!Number.isFinite(value) || value < 0) return
+    setBusy(true)
+    setApiError('')
+    try {
+      const supplierEvent = selected === 'supplier'
+      const scenario = await createScenario(business.id, {
+        title: `${active.title} by ${value}%`,
+        event_type: supplierEvent ? 'supplier_price_increase' : 'sales_decrease',
+        description: `${active.title} by ${value}%.`,
+        assumptions: { [supplierEvent ? 'supplier_cost_increase_percent' : 'sales_decrease_percent']: value },
+        missing_information: [],
+      })
+      await confirmScenario(scenario.id)
+      const calculation = await simulateScenario(scenario.id, business)
+      navigate('/results', { state: { calculation, scenarioId: scenario.id } })
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Could not calculate this demo scenario.')
     } finally {
       setBusy(false)
     }
@@ -207,17 +232,19 @@ export default function Simulator() {
             <button className="back-link" onClick={() => { setStep('choose'); setConfirmed(false) }}><ChevronLeft size={15} /> Back to event selection</button>
             <div className="assumption-heading"><span className="event-icon large-event-icon"><Icon size={19} /></span><div><div className="eyebrow">SELECTED EVENT</div><h2>{active.title}</h2><p>{active.description}</p></div></div>
             <div className="assumption-form"><Field label={activeTemplate.assumptionLabel} type="number" value={assumption} prefix={activeTemplate.prefix} suffix={activeTemplate.suffix} onChange={(value) => { setAssumption(value); setConfirmed(false) }} help={activeTemplate.description} />
-              {activeTemplate.baselineKey && <div className="baseline-reference"><div><span>Business baseline</span><strong>{activeTemplate.baselineKey === 'revenue' ? `Monthly revenue · ${money(profile.revenue)}` : `Monthly supplier costs · ${money(profile.supplierCosts)}`}</strong></div><span className="baseline-source">Saved in this session</span></div>}
+              {activeTemplate.baselineKey && <div className="baseline-reference"><div><span>Business baseline</span><strong>{activeTemplate.baselineKey === 'revenue' ? `Monthly revenue · ${money(Number(business.monthly_revenue))}` : `Monthly supplier costs · ${money(Number(business.supplier_costs))}`}</strong></div><span className="baseline-source">Current demo session</span></div>}
               {activeTemplate.missingInfo && <div className="inline-notice">Some information needed for this scenario is not in the demo profile. This prototype will not fill in unknown values.</div>}
             </div>
-            <div className="confirmation-box"><label className="check-row"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span className="custom-check"><Check size={12} /></span><span><strong>I have reviewed this assumption</strong><small>I understand the result preview is illustrative and will not use this input.</small></span></label></div>
-            <div className="sim-footer"><span><ChevronLeft size={14} /> Assumption review</span><Button disabled={!confirmed || !assumption} onClick={() => navigate('/results', { state: { selectedEvent: active.title } })}>View demo preview <ArrowRight size={15} /></Button></div>
+            <div className="confirmation-box"><label className="check-row"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span className="custom-check"><Check size={12} /></span><span><strong>I have reviewed this assumption</strong><small>Calculation uses your current in-memory demo financials.</small></span></label></div>
+            {apiError && <div className="inline-error" role="alert">{apiError}</div>}
+            {!['supplier', 'sales'].includes(selected) && <div className="inline-notice">This predefined scenario is not supported by the current financial engine. Use a supported custom event to calculate an estimate.</div>}
+            <div className="sim-footer"><span><ChevronLeft size={14} /> Assumption review</span><Button disabled={!confirmed || !assumption || busy || !['supplier', 'sales'].includes(selected)} onClick={runTemplateScenario}>{busy ? 'Calculating…' : 'Confirm & calculate'} <ArrowRight size={15} /></Button></div>
           </>}
         </Card>
       </div>
       <aside className="simulator-aside">
         <Card className="how-card"><div className="how-card-icon"><Sparkles size={16} /></div><h3>Built for clear decisions</h3><p>Stratify is designed to separate your assumptions from the numbers, so you can see what drives each result.</p><div className="how-step"><span>01</span><div><strong>Choose an event</strong><small>Select a business change to explore</small></div></div><div className="how-step"><span>02</span><div><strong>Confirm assumptions</strong><small>Review the inputs before calculation</small></div></div><div className="how-step"><span>03</span><div><strong>Compare outcomes</strong><small>See the potential financial impact</small></div></div></Card>
-        <Card className="baseline-card"><div className="baseline-head"><span className="baseline-icon"><Activity size={15} /></span><span>SAVED BUSINESS BASELINE</span></div><strong>{business?.name ?? 'Connecting to business profile…'}</strong>{business && <><div className="baseline-metric"><span>Revenue</span><b>{business.currency} {Number(business.monthly_revenue).toLocaleString('en-MY')}</b></div><div className="baseline-metric"><span>Supplier costs</span><b>{business.currency} {Number(business.supplier_costs).toLocaleString('en-MY')}</b></div><div className="baseline-metric"><span>Cash balance</span><b>{business.currency} {Number(business.cash_balance).toLocaleString('en-MY')}</b></div></>}<div className="baseline-foot">Read from the backend business profile</div></Card>
+        <Card className="baseline-card"><div className="baseline-head"><span className="baseline-icon"><Activity size={15} /></span><span>DEMO BUSINESS BASELINE</span></div><strong>{business.name}</strong><div className="baseline-metric"><span>Revenue</span><b>{business.currency} {Number(business.monthly_revenue).toLocaleString('en-MY')}</b></div><div className="baseline-metric"><span>Supplier costs</span><b>{business.currency} {Number(business.supplier_costs).toLocaleString('en-MY')}</b></div><div className="baseline-metric"><span>Cash balance</span><b>{business.currency} {Number(business.cash_balance).toLocaleString('en-MY')}</b></div><div className="baseline-foot">Temporary in-memory values · refresh resets sample data</div></Card>
         <div className="sim-disclaimer"><CircleHelp size={15} /><p>Scenario results are estimates based on available information and assumptions. They are not guaranteed predictions or financial advice.</p></div>
       </aside>
     </div>

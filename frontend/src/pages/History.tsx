@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowRight, Clock3, Filter, LoaderCircle, Plus, Search } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button, Card, DemoNotice, PageHeader } from '../components/ui'
-import { listBusinesses, listScenarios, simulateScenario, type Business, type SavedScenario, type SimulationCalculation } from '../lib/api'
+import { useDemoBusiness } from '../components/demo-business-context'
+import { listBusinesses, listScenarios, simulateScenario, type SavedScenario, type SimulationCalculation } from '../lib/api'
 
 const eventLabels: Record<string, string> = {
   supplier_price_increase: 'Cost pressure',
@@ -21,7 +22,7 @@ export default function History() {
   const [filter, setFilter] = useState('All scenarios')
   const [search, setSearch] = useState('')
   const [items, setItems] = useState<HistoryItem[]>([])
-  const [business, setBusiness] = useState<Business | null>(null)
+  const { business, setBusiness } = useDemoBusiness()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const navigate = useNavigate()
@@ -33,19 +34,20 @@ export default function History() {
         const businesses = await listBusinesses()
         const selectedBusiness = businesses.find((item) => item.name === 'KL Electronics Sdn. Bhd.') ?? businesses[0]
         if (!selectedBusiness) {
-          if (active) { setBusiness(null); setItems([]) }
+          if (active) setItems([])
           return
         }
+        setBusiness((current) => ({ ...current, id: selectedBusiness.id }))
         const scenarios = await listScenarios(selectedBusiness.id)
         const hydrated = await Promise.all(scenarios.map(async (scenario) => {
           if (scenario.status !== 'confirmed') return { scenario, calculation: null }
           try {
-            return { scenario, calculation: await simulateScenario(scenario.id) }
+            return { scenario, calculation: await simulateScenario(scenario.id, { ...business, id: selectedBusiness.id }) }
           } catch {
             return { scenario, calculation: null }
           }
         }))
-        if (active) { setBusiness(selectedBusiness); setItems(hydrated) }
+        if (active) setItems(hydrated)
       } catch (loadError) {
         if (active) setError(loadError instanceof Error ? loadError.message : 'Could not load scenario history.')
       } finally {
@@ -54,7 +56,7 @@ export default function History() {
     }
     void loadHistory()
     return () => { active = false }
-  }, [])
+  }, [business, setBusiness])
 
   const categories = useMemo(() => [...new Set(items.map(({ scenario }) => eventLabels[scenario.event_type] ?? 'Other'))], [items])
   const rows = items.filter(({ scenario }) =>

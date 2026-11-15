@@ -13,25 +13,6 @@ export const business = {
   profit: 38000,
 }
 
-const BUSINESS_PROFILE_KEY = 'stratify.business-profile'
-type BusinessProfile = typeof business
-
-export function getBusinessProfile(): BusinessProfile {
-  if (typeof window === 'undefined') return business
-  try {
-    const stored = window.sessionStorage.getItem(BUSINESS_PROFILE_KEY)
-    if (!stored) return business
-    const parsed = JSON.parse(stored) as Partial<BusinessProfile>
-    return { ...business, ...parsed }
-  } catch {
-    return business
-  }
-}
-
-export function saveBusinessProfile(profile: BusinessProfile) {
-  window.sessionStorage.setItem(BUSINESS_PROFILE_KEY, JSON.stringify(profile))
-}
-
 export const monthlyTrend = [
   { month: 'Jun', revenue: 105, expenses: 69 },
   { month: 'Jul', revenue: 112, expenses: 74 },
