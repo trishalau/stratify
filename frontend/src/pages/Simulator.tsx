@@ -189,7 +189,7 @@ export default function Simulator() {
             <div className="event-grid">{scenarios.map((scenario) => {
               const ScenarioIcon = icons[scenario.icon as keyof typeof icons]
               return <button key={scenario.id} className={`event-card ${selected === scenario.id ? 'event-selected' : ''}`} onClick={() => selectScenario(scenario.id)} aria-pressed={selected === scenario.id}>
-                <span className="event-icon"><ScenarioIcon size={17} /></span><span className="event-tag">{scenario.tag}</span><strong>{scenario.title}</strong><span className="event-description">{scenario.description}</span><span className="event-select-mark">{selected === scenario.id && <Check size={12} />}</span>
+                <span className={`event-icon event-icon-${scenario.id}`}><ScenarioIcon size={17} /></span><span className="event-tag">{scenario.tag}</span><strong>{scenario.title}</strong><span className="event-description">{scenario.description}</span><span className="event-select-mark">{selected === scenario.id && <Check size={12} />}</span>
               </button>
             })}</div>
             <div className="custom-event-box"><div className="custom-event-icon"><MessageSquareText size={16} /></div><div className="custom-event-content"><strong>Describe a custom event</strong><p>Use your own words. Stratify will ask when it needs a clearer detail.</p>

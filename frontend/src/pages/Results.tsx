@@ -26,6 +26,8 @@ function LiveResults({ calculation, scenarioId, scenarioInput, businessId }: { c
   const formatMoney = (value: string | null) => value === null ? 'Unavailable' : new Intl.NumberFormat('en-MY', { style: 'currency', currency, maximumFractionDigits: 2 }).format(Number(value))
   const baseline = calculation.baseline
   const estimate = calculation.estimate
+  const profitDelta = Number(estimate.net_profit) - Number(baseline.net_profit)
+  const profitDeltaTone = profitDelta > 0 ? 'positive' : profitDelta < 0 ? 'negative' : 'neutral'
   const metrics = [
     { title: 'Monthly revenue', before: baseline.monthly_revenue, after: estimate.monthly_revenue },
     { title: 'Monthly expenses', before: baseline.total_expenses, after: estimate.total_expenses },
@@ -55,6 +57,10 @@ function LiveResults({ calculation, scenarioId, scenarioInput, businessId }: { c
     <PageHeader eyebrow="DETERMINISTIC SCENARIO ESTIMATE" title="Scenario results" description="A hypothetical monthly comparison calculated from your confirmed assumptions." action={<Button variant="ghost" size="sm" onClick={() => window.print()}><Download size={15} /> Print / PDF</Button>} />
     <DemoNotice>Estimate based on confirmed assumptions and your current in-memory demo values. Refreshing restores the original fictional sample data. This is not a guaranteed prediction or financial advice.</DemoNotice>
     <div className="result-title-row"><div><span className="result-event-icon"><ArrowDownRight size={18} /></span><div><div className="eyebrow">{scenarioInput ? 'CURRENT SESSION · TEMPORARY RUN' : `SAVED SCENARIO · #${scenarioId}`}</div><h2>{calculation.title}</h2><span className="result-date">Monthly estimate <i /> {calculation.status}</span></div></div><Link className="back-link result-back" to="/simulator"><ArrowLeft size={14} /> New scenario</Link></div>
+    <Card className={`result-hero result-hero-${profitDeltaTone}`}>
+      <div className="result-hero-copy"><span className="result-hero-label">ESTIMATED MONTHLY PROFIT IMPACT</span><strong>{profitDelta > 0 ? '+' : profitDelta < 0 ? '−' : ''}{formatMoney(Math.abs(profitDelta).toFixed(2))}</strong><span>{profitDelta > 0 ? 'Higher estimated profit than baseline' : profitDelta < 0 ? 'Lower estimated profit than baseline' : 'No estimated change from baseline'}</span></div>
+      <div className="result-hero-side"><span className="result-hero-icon">{profitDelta < 0 ? <ArrowDownRight size={20} /> : <ArrowUpRight size={20} />}</span><span>Calculated from the confirmed assumptions</span></div>
+    </Card>
     <div className="result-stat-grid">{metrics.map((metric) => {
       const delta = Number(metric.after) - Number(metric.before)
       const favorable = metric.title === 'Monthly expenses' ? delta <= 0 : delta >= 0
@@ -77,11 +83,21 @@ function LiveResults({ calculation, scenarioId, scenarioInput, businessId }: { c
 }
 
 function DemoResults({ selectedEvent }: { selectedEvent?: string }) {
+  const chartData = demoResult.rows.map((row) => ({
+    label: row.label.replace('Monthly ', ''),
+    baseline: Number(row.baseline.replace(/[^\d]/g, '')) / 1000,
+    estimate: Number(row.scenario.replace(/[^\d]/g, '')) / 1000,
+  }))
   return <>
     <PageHeader eyebrow="DEMO RESULT PREVIEW · 14 NOV 2026" title="Scenario results" description="A structured view of the potential financial impact." action={<Button variant="ghost" size="sm" onClick={() => window.print()}><Download size={15} /> Print / PDF</Button>} />
     <DemoNotice>Fixed demonstration fixture only. This page does not use assumptions entered through predefined event templates.</DemoNotice>
     {selectedEvent && <div className="selected-event-note"><Info size={15} /><span>You selected <strong>{selectedEvent}</strong>. The example below is a separate supplier cost fixture for interface demonstration.</span></div>}
     <div className="result-title-row"><div><span className="result-event-icon"><ArrowDownRight size={18} /></span><div><div className="eyebrow">REFERENCE EXAMPLE</div><h2>{demoResult.title}</h2><span className="result-date">Created {demoResult.date} <i /> Supplier expenses increase by 20%</span></div></div><Link className="back-link result-back" to="/simulator"><ArrowLeft size={14} /> Edit scenario</Link></div>
-    <Card className="comparison-card"><div className="section-title">Static reference example</div><p className="section-subtitle">Run a supported custom event from the simulator to see a calculation based on confirmed inputs.</p></Card>
+    <Card className="comparison-card demo-result-card"><div className="section-head"><div><div className="section-title">Reference comparison</div><div className="section-subtitle">Monthly figures <span className="muted-bullet">·</span> MYR thousands</div></div><span className="live-badge fixture-tag">Illustrative fixture</span></div>
+      <div className="chart-legend result-legend"><span><i className="legend-swatch baseline-swatch" />Baseline</span><span><i className="legend-swatch optimistic-swatch" />Reference scenario</span></div>
+      <div className="result-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} margin={{ top: 10, right: 12, left: -15, bottom: 0 }} barGap={5} barCategoryGap="24%"><CartesianGrid vertical={false} stroke="#e8eee9" strokeDasharray="3 5" /><XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fill: '#718078', fontSize: 11 }} tickMargin={10} /><YAxis axisLine={false} tickLine={false} tick={{ fill: '#849087', fontSize: 10 }} tickFormatter={(value) => `RM${value}k`} /><Tooltip formatter={(value) => [`RM${value}k`, '']} contentStyle={{ border: '1px solid #e3ebe5', borderRadius: 12, fontSize: 11 }} /><Bar dataKey="baseline" name="Baseline" fill="#bdcfc3" radius={[6, 6, 0, 0]} /><Bar dataKey="estimate" name="Reference scenario" fill="#64927a" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div>
+      <div className="table-wrap result-table-wrap"><table className="scenario-table result-table"><thead><tr><th>MONTHLY METRIC</th><th>BASELINE</th><th>REFERENCE</th><th>CHANGE</th></tr></thead><tbody>{demoResult.rows.map((row) => <tr key={row.label}><td><strong>{row.label}</strong></td><td>{row.baseline}</td><td><b>{row.scenario}</b></td><td><span className={`impact-text ${row.tone}`}>{row.change}</span></td></tr>)}</tbody></table></div>
+      <p className="fixture-caption">Reference figures only. Run a supported scenario to see results calculated from reviewed inputs.</p>
+    </Card>
   </>
 }

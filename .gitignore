@@ -1,0 +1,6 @@
+# Keep local environment values and credentials out of Git.
+.env
+.env.*
+!.env.example
+.neon
+node_modules/

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Plus, Save, Store, Trash2 } from 'lucide-react'
+import { Check, MapPin, Plus, Save, Store, Trash2 } from 'lucide-react'
 import { Button, Card, DemoNotice, Field, PageHeader } from '../components/ui'
 import { useDemoBusiness } from '../components/demo-business-context'
 
@@ -9,6 +9,9 @@ export default function Business() {
   const [newVariableValue, setNewVariableValue] = useState('')
   const [saved, setSaved] = useState(false)
   const form = business
+  const monthlyExpenses = Number(form.supplier_costs || 0) + Number(form.rent || 0) + Number(form.staff_salaries || 0) + Number(form.other_expenses || 0) + form.custom_monthly_variables.reduce((sum, item) => sum + Number(item.value || 0), 0)
+  const monthlyProfit = Number(form.monthly_revenue || 0) - monthlyExpenses
+  const formatValue = (value: number) => `${business.currency ?? 'MYR'} ${value.toLocaleString('en-MY', { maximumFractionDigits: 0 })}`
 
   const update = (key: keyof typeof business) => (value: string) => {
     setSaved(false)
@@ -63,7 +66,7 @@ export default function Business() {
         </Card>
       </div>
       <aside className="business-aside">
-        <Card className="profile-summary"><div className="summary-top"><div className="summary-logo">KL</div><span className="verified-pill"><span />Demo profile</span></div><h2>{form.name}</h2><p>{form.industry}</p><div className="summary-location">⌖ &nbsp;{form.location}</div><div className="position-separator" /><div className="summary-line"><span>Monthly revenue</span><strong>{business?.currency ?? 'MYR'} {Number(form.monthly_revenue || 0).toLocaleString('en-MY')}</strong></div><div className="summary-line"><span>Cash balance</span><strong>{business?.currency ?? 'MYR'} {Number(form.cash_balance || 0).toLocaleString('en-MY')}</strong></div><div className="summary-session-note">Saved business baseline</div></Card>
+        <Card className="profile-summary"><div className="summary-top"><div className="summary-logo">KL</div><span className="verified-pill"><span />Demo profile</span></div><h2>{form.name}</h2><p>{form.industry}</p><div className="summary-location"><MapPin size={13} />{form.location}</div><div className="position-separator" /><div className="summary-line"><span>Monthly revenue</span><strong>{formatValue(Number(form.monthly_revenue || 0))}</strong></div><div className="summary-line"><span>Monthly expenses</span><strong>{formatValue(monthlyExpenses)}</strong></div><div className="summary-line summary-profit-row"><span>Net profit</span><strong className={monthlyProfit >= 0 ? 'summary-profit' : 'negative'}>{formatValue(monthlyProfit)}</strong></div><div className="summary-line"><span>Cash balance</span><strong>{formatValue(Number(form.cash_balance || 0))}</strong></div><div className="summary-session-note">Calculated from this session’s profile values</div></Card>
         <Card className="note-card"><div className="note-mark">i</div><div><strong>Keep your baseline current</strong><p>Scenario comparisons are only as useful as the information behind them. Update your figures when your business changes.</p></div></Card>
       </aside>
     </div>

@@ -15,6 +15,12 @@ def configure_database(app: Flask) -> None:
             "DATABASE_URL is required. Copy .env.example to .env and configure PostgreSQL."
         )
 
+    # Neon supplies PostgreSQL URLs with the generic `postgresql://` scheme.
+    # This project installs psycopg 3 (not psycopg2), so tell SQLAlchemy to use
+    # its psycopg 3 dialect explicitly.
+    if database_url.startswith("postgresql://"):
+        database_url = "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
+
     engine_options = {"pool_pre_ping": True}
     if database_url.startswith(("postgresql://", "postgresql+")):
         # Keep the per-function-instance connection count bounded. The managed
