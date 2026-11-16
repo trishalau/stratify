@@ -99,7 +99,7 @@ def parse_business_payload(data: Any, *, partial: bool = False) -> dict[str, Any
         normalized = []
         names = set()
         for item in variables:
-            if not isinstance(item, dict) or set(item) != {"name", "value"}:
+            if not isinstance(item, dict) or not {"name", "value"}.issubset(item) or set(item) - {"name", "value", "type"}:
                 raise RequestValidationError("Each custom variable needs a name and amount.")
             name = item["name"]
             if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
@@ -107,7 +107,13 @@ def parse_business_payload(data: Any, *, partial: bool = False) -> dict[str, Any
             if name.strip().casefold() in names:
                 raise RequestValidationError("Custom variable names must be unique.")
             names.add(name.strip().casefold())
-            normalized.append({"name": name.strip(), "value": format(_parse_amount(item["value"], "custom_monthly_variables"), ".2f")})
+            variable_type = item.get("type", "expense")
+            if variable_type not in {"revenue", "expense"}:
+                raise RequestValidationError("Choose revenue or expense for each monthly variable.", {"custom_monthly_variables": "Type must be revenue or expense."})
+            normalized_item = {"name": name.strip(), "value": format(_parse_amount(item["value"], "custom_monthly_variables"), ".2f")}
+            if "type" in item:
+                normalized_item["type"] = variable_type
+            normalized.append(normalized_item)
         result["custom_monthly_variables"] = normalized
     if not partial:
         result.setdefault("currency", "MYR")

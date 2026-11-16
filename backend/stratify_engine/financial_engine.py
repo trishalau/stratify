@@ -25,6 +25,27 @@ EVENT_FIELDS = {
         "minimum": Decimal("0"),
         "maximum": Decimal("100"),
     },
+    "major_customer_loss": {
+        "primary": "customer_revenue_share_percent",
+        "optimistic": None,
+        "pessimistic": None,
+        "categories": (),
+        "minimum": Decimal("0"),
+        "maximum": Decimal("100"),
+    },
+    "new_competitor": {
+        "primary": "competitor_sales_decrease_percent", "optimistic": None, "pessimistic": None,
+        "categories": (), "minimum": Decimal("0"), "maximum": Decimal("100"),
+    },
+    "interest_rate_increase": {
+        "primary": "interest_rate_increase_percentage_points", "optimistic": None, "pessimistic": None,
+        "required_amount": "outstanding_loan_balance", "categories": (),
+        "minimum": Decimal("0"), "maximum": Decimal("100"),
+    },
+    "new_branch": {
+        "primary": "new_branch_monthly_cost", "optimistic": None, "pessimistic": None,
+        "categories": (), "minimum": Decimal("0"), "maximum": MAX_AMOUNT,
+    },
     "expense_change": {
         "primary": "expense_change_percent",
         "optimistic": "optimistic_expense_change_percent",
@@ -88,13 +109,19 @@ def _profile_values(business: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(custom, list):
         raise FinancialEngineError("Custom monthly variables must be a list.", "custom_monthly_variables")
     values["custom_expenses"] = {}
+    values["custom_revenue"] = Decimal("0.00")
     for item in custom:
         if not isinstance(item, Mapping) or not isinstance(item.get("name"), str):
             raise FinancialEngineError("A custom monthly variable is malformed.", "custom_monthly_variables")
         name = item["name"].strip()
         if not name or name in values["custom_expenses"]:
             raise FinancialEngineError("Custom monthly variable names must be unique.", "custom_monthly_variables")
-        values["custom_expenses"][name] = _money(item.get("value"), "custom_monthly_variables")
+        amount = _money(item.get("value"), "custom_monthly_variables")
+        if item.get("type", "expense") == "revenue":
+            values["custom_revenue"] += amount
+        else:
+            values["custom_expenses"][name] = amount
+    values["monthly_revenue"] += values["custom_revenue"]
     return values
 
 
@@ -126,6 +153,7 @@ def _calculate_case(
     event_type: str,
     percentage: Decimal,
     expense_category: str | None,
+    assumptions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     revenue = profile["monthly_revenue"]
     expenses = {category: profile[category] for category in EXPENSE_CATEGORIES}
@@ -133,6 +161,15 @@ def _calculate_case(
 
     if event_type == "sales_decrease":
         revenue = revenue * (Decimal("1") - percentage / HUNDRED)
+    elif event_type == "major_customer_loss":
+        revenue = revenue * (Decimal("1") - percentage / HUNDRED)
+    elif event_type == "new_competitor":
+        revenue = revenue * (Decimal("1") - percentage / HUNDRED)
+    elif event_type == "interest_rate_increase":
+        balance = _money((assumptions or {}).get("outstanding_loan_balance"), "outstanding_loan_balance")
+        expenses["interest_costs"] = balance * (percentage / HUNDRED) / Decimal("12")
+    elif event_type == "new_branch":
+        expenses["branch_costs"] = _money(percentage, "new_branch_monthly_cost")
     elif event_type == "supplier_price_increase":
         expenses["supplier_costs"] *= Decimal("1") + percentage / HUNDRED
     elif event_type == "expense_change" and expense_category:
@@ -167,12 +204,14 @@ def simulate_scenario(business: Mapping[str, Any], scenario: Mapping[str, Any]) 
     if not isinstance(assumptions, Mapping):
         raise FinancialEngineError("Assumptions must be a structured object.", "assumptions")
     spec = EVENT_FIELDS[event_type]
-    allowed_fields = {"expense_category", spec["primary"], spec["optimistic"], spec["pessimistic"]}
+    allowed_fields = {"expense_category", spec["primary"]} | {key for key in (spec["optimistic"], spec["pessimistic"], spec.get("required_amount")) if key}
     unknown_fields = set(assumptions) - allowed_fields
     if unknown_fields:
         raise FinancialEngineError(f"Unsupported assumption field: {sorted(unknown_fields)[0]}.")
     if spec["primary"] not in assumptions:
         raise FinancialEngineError(f"{spec['primary']} is required.", spec["primary"])
+    if spec.get("required_amount") and spec["required_amount"] not in assumptions:
+        raise FinancialEngineError(f"{spec['required_amount']} is required.", spec["required_amount"])
 
     expense_category = None
     if event_type == "expense_change":
@@ -184,8 +223,8 @@ def simulate_scenario(business: Mapping[str, Any], scenario: Mapping[str, Any]) 
     primary = _percentage(
         assumptions[spec["primary"]], spec["primary"], spec["minimum"], spec["maximum"]
     )
-    optimistic_present = spec["optimistic"] in assumptions
-    pessimistic_present = spec["pessimistic"] in assumptions
+    optimistic_present = bool(spec["optimistic"] and spec["optimistic"] in assumptions)
+    pessimistic_present = bool(spec["pessimistic"] and spec["pessimistic"] in assumptions)
     if optimistic_present != pessimistic_present:
         raise FinancialEngineError("Provide both optimistic and pessimistic assumptions, or neither.")
 
@@ -193,7 +232,7 @@ def simulate_scenario(business: Mapping[str, Any], scenario: Mapping[str, Any]) 
     baseline_expenses = {category: profile[category] for category in EXPENSE_CATEGORIES}
     baseline_expenses.update({f"custom:{name}": value for name, value in profile["custom_expenses"].items()})
     baseline = _position(profile["monthly_revenue"], baseline_expenses, profile["currency"])
-    central = _calculate_case(profile, event_type, primary, expense_category)
+    central = _calculate_case(profile, event_type, primary, expense_category, assumptions)
     optimistic = None
     pessimistic = None
 

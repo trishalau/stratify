@@ -25,13 +25,13 @@ function MetricCard({ label, value, change, icon: Icon, tone, footnote, trend }:
 
 export default function Dashboard() {
   const { business } = useDemoBusiness()
-  const revenue = Number(business.monthly_revenue)
+  const revenue = Number(business.monthly_revenue) + business.custom_monthly_variables.filter((item) => item.type === 'revenue').reduce((sum, item) => sum + Number(item.value || 0), 0)
   const expenseMix = [
     { name: 'Supplier costs', value: Number(business.supplier_costs), color: '#3d8066', className: 'mix-supplier' },
     { name: 'Rent', value: Number(business.rent), color: '#7b7094', className: 'mix-rent' },
     { name: 'Salaries', value: Number(business.staff_salaries), color: '#7197ae', className: 'mix-salaries' },
     { name: 'Other', value: Number(business.other_expenses), color: '#c39a59', className: 'mix-other' },
-    ...business.custom_monthly_variables.map((item) => ({ name: item.name, value: Number(item.value), color: '#88a785', className: 'mix-custom' })),
+    ...business.custom_monthly_variables.filter((item) => item.type !== 'revenue').map((item) => ({ name: item.name, value: Number(item.value), color: '#88a785', className: 'mix-custom' })),
   ].filter((item) => Number.isFinite(item.value) && item.value > 0)
   const expenses = expenseMix.reduce((sum, item) => sum + item.value, 0)
   const profit = revenue - expenses

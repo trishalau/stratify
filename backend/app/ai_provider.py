@@ -43,6 +43,10 @@ class GeminiScenarioAI:
     ) -> dict[str, Any]:
         if not self.api_key:
             raise AIConfigurationError("GEMINI_API_KEY is not configured for the backend.")
+        if any(ord(char) < 32 or ord(char) == 127 for char in self.api_key):
+            raise AIConfigurationError(
+                "GEMINI_API_KEY contains invalid characters. Replace it with a valid Google AI Studio API key in the backend environment settings."
+            )
 
         payload = {
             "systemInstruction": {"parts": [{"text": instructions}]},

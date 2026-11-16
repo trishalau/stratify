@@ -7,10 +7,12 @@ export default function Business() {
   const { business, setBusiness } = useDemoBusiness()
   const [newVariableName, setNewVariableName] = useState('')
   const [newVariableValue, setNewVariableValue] = useState('')
+  const [newVariableType, setNewVariableType] = useState<'revenue' | 'expense'>('expense')
   const [saved, setSaved] = useState(false)
   const form = business
-  const monthlyExpenses = Number(form.supplier_costs || 0) + Number(form.rent || 0) + Number(form.staff_salaries || 0) + Number(form.other_expenses || 0) + form.custom_monthly_variables.reduce((sum, item) => sum + Number(item.value || 0), 0)
-  const monthlyProfit = Number(form.monthly_revenue || 0) - monthlyExpenses
+  const monthlyExpenses = Number(form.supplier_costs || 0) + Number(form.rent || 0) + Number(form.staff_salaries || 0) + Number(form.other_expenses || 0) + form.custom_monthly_variables.filter((item) => item.type !== 'revenue').reduce((sum, item) => sum + Number(item.value || 0), 0)
+  const monthlyRevenue = Number(form.monthly_revenue || 0) + form.custom_monthly_variables.filter((item) => item.type === 'revenue').reduce((sum, item) => sum + Number(item.value || 0), 0)
+  const monthlyProfit = monthlyRevenue - monthlyExpenses
   const formatValue = (value: number) => `${business.currency ?? 'MYR'} ${value.toLocaleString('en-MY', { maximumFractionDigits: 0 })}`
 
   const update = (key: keyof typeof business) => (value: string) => {
@@ -26,9 +28,10 @@ export default function Business() {
   const addVariable = () => {
     const name = newVariableName.trim()
     if (!name || !newVariableValue || form.custom_monthly_variables.some((item) => item.name.toLowerCase() === name.toLowerCase())) return
-    setBusiness((current) => ({ ...current, custom_monthly_variables: [...current.custom_monthly_variables, { name, value: newVariableValue }] }))
+    setBusiness((current) => ({ ...current, custom_monthly_variables: [...current.custom_monthly_variables, { name, value: newVariableValue, type: newVariableType }] }))
     setNewVariableName('')
     setNewVariableValue('')
+    setNewVariableType('expense')
     setSaved(false)
   }
 
@@ -57,16 +60,16 @@ export default function Business() {
             <div className="custom-monthly-title"><strong>Additional monthly variables</strong><small>Add any monthly value you want to keep on your business profile.</small></div>
             {form.custom_monthly_variables.map((item, index) => <div className="custom-monthly-box" key={`${item.name}-${index}`}>
               <div className="custom-monthly-box-head"><strong>{item.name || 'New monthly variable'}</strong><Button aria-label={`Remove ${item.name}`} title={`Remove ${item.name}`} size="sm" variant="secondary" onClick={() => removeVariable(index)}><Trash2 size={14} />Remove</Button></div>
-              <div className="custom-monthly-row"><Field label="Variable name" value={item.name} onChange={(name) => { setSaved(false); setBusiness((current) => ({ ...current, custom_monthly_variables: current.custom_monthly_variables.map((entry, i) => i === index ? { ...entry, name } : entry) })) }} /><Field label="Monthly amount" type="number" prefix="RM" value={item.value} onChange={(value) => { setSaved(false); setBusiness((current) => ({ ...current, custom_monthly_variables: current.custom_monthly_variables.map((entry, i) => i === index ? { ...entry, value } : entry) })) }} /></div>
+              <div className="custom-monthly-row"><Field label="Variable name" value={item.name} onChange={(name) => { setSaved(false); setBusiness((current) => ({ ...current, custom_monthly_variables: current.custom_monthly_variables.map((entry, i) => i === index ? { ...entry, name } : entry) })) }} /><Field label="Monthly amount" type="number" prefix="RM" value={item.value} onChange={(value) => { setSaved(false); setBusiness((current) => ({ ...current, custom_monthly_variables: current.custom_monthly_variables.map((entry, i) => i === index ? { ...entry, value } : entry) })) }} /><label className="field"><span>Type</span><select value={item.type ?? 'expense'} onChange={(event) => { setSaved(false); setBusiness((current) => ({ ...current, custom_monthly_variables: current.custom_monthly_variables.map((entry, i) => i === index ? { ...entry, type: event.target.value as 'revenue' | 'expense' } : entry) })) }}><option value="revenue">Revenue (gain)</option><option value="expense">Expense (loss)</option></select></label></div>
             </div>)}
-            <div className="custom-monthly-add"><Field label="New variable name" value={newVariableName} onChange={setNewVariableName} /><Field label="Monthly amount" type="number" prefix="RM" value={newVariableValue} onChange={setNewVariableValue} /><Button size="sm" variant="secondary" disabled={!newVariableName.trim() || !newVariableValue} onClick={addVariable}><Plus size={14} />Add variable</Button></div>
+            <div className="custom-monthly-add"><Field label="New variable name" value={newVariableName} onChange={setNewVariableName} /><Field label="Monthly amount" type="number" prefix="RM" value={newVariableValue} onChange={setNewVariableValue} /><label className="field"><span>Add as</span><select value={newVariableType} onChange={(event) => setNewVariableType(event.target.value as 'revenue' | 'expense')}><option value="revenue">Revenue (gain)</option><option value="expense">Expense (loss)</option></select></label><Button size="sm" variant="secondary" disabled={!newVariableName.trim() || !newVariableValue} onClick={addVariable}><Plus size={14} />Add variable</Button></div>
             <small>Custom variables can be used in supported scenario calculations. Edits are not stored outside this page session.</small>
           </div>
           <div className="form-card-foot"><span>Net profit is calculated from revenue and operating expenses.</span><strong>Deterministic engine</strong></div>
         </Card>
       </div>
       <aside className="business-aside">
-        <Card className="profile-summary"><div className="summary-top"><div className="summary-logo">KL</div><span className="verified-pill"><span />Demo profile</span></div><h2>{form.name}</h2><p>{form.industry}</p><div className="summary-location"><MapPin size={13} />{form.location}</div><div className="position-separator" /><div className="summary-line"><span>Monthly revenue</span><strong>{formatValue(Number(form.monthly_revenue || 0))}</strong></div><div className="summary-line"><span>Monthly expenses</span><strong>{formatValue(monthlyExpenses)}</strong></div><div className="summary-line summary-profit-row"><span>Net profit</span><strong className={monthlyProfit >= 0 ? 'summary-profit' : 'negative'}>{formatValue(monthlyProfit)}</strong></div><div className="summary-line"><span>Cash balance</span><strong>{formatValue(Number(form.cash_balance || 0))}</strong></div><div className="summary-session-note">Calculated from this session’s profile values</div></Card>
+        <Card className="profile-summary"><div className="summary-top"><div className="summary-logo">KL</div><span className="verified-pill"><span />Demo profile</span></div><h2>{form.name}</h2><p>{form.industry}</p><div className="summary-location"><MapPin size={13} />{form.location}</div><div className="position-separator" /><div className="summary-line"><span>Monthly revenue</span><strong>{formatValue(monthlyRevenue)}</strong></div><div className="summary-line"><span>Monthly expenses</span><strong>{formatValue(monthlyExpenses)}</strong></div><div className="summary-line summary-profit-row"><span>Net profit</span><strong className={monthlyProfit >= 0 ? 'summary-profit' : 'negative'}>{formatValue(monthlyProfit)}</strong></div><div className="summary-line"><span>Cash balance</span><strong>{formatValue(Number(form.cash_balance || 0))}</strong></div><div className="summary-session-note">Calculated from this session’s profile values</div></Card>
         <Card className="note-card"><div className="note-mark">i</div><div><strong>Keep your baseline current</strong><p>Scenario comparisons are only as useful as the information behind them. Update your figures when your business changes.</p></div></Card>
       </aside>
     </div>

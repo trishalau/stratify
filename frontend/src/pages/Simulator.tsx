@@ -9,13 +9,13 @@ import { interpretScenarioWithDemoProfile, listBusinesses, simulateDemoScenario,
 
 const icons = { package: Package, 'trending-down': TrendingDown, 'user-round-x': UserRoundX, target: Target, landmark: Landmark, store: Store }
 
-const templates: Record<string, { assumptionLabel: string; assumption: string; suffix?: string; prefix?: string; baselineKey?: 'supplierCosts' | 'revenue'; missingInfo?: boolean; description: string }> = {
+const templates: Record<string, { assumptionLabel: string; assumption: string; suffix?: string; prefix?: string; baselineKey?: 'supplierCosts' | 'revenue'; secondaryLabel?: string; secondaryValue?: string; secondaryKey?: string; assumptionKey?: string; description: string }> = {
   supplier: { assumptionLabel: 'Supplier cost increase', assumption: '20', suffix: '%', baselineKey: 'supplierCosts', description: 'Change to your monthly supplier expenses.' },
   sales: { assumptionLabel: 'Monthly sales decrease', assumption: '15', suffix: '%', baselineKey: 'revenue', description: 'Change to monthly revenue.' },
-  customer: { assumptionLabel: 'Share of revenue from customer', assumption: '', suffix: '%', missingInfo: true, description: 'This information is not included in the demo profile.' },
-  competitor: { assumptionLabel: 'Estimated revenue change', assumption: '', suffix: '%', missingInfo: true, description: 'No impact estimate is provided in this prototype.' },
-  interest: { assumptionLabel: 'Interest rate increase', assumption: '', suffix: 'points', missingInfo: true, description: 'Loan balance and current interest costs are not available.' },
-  branch: { assumptionLabel: 'Estimated monthly branch cost', assumption: '', prefix: 'RM', missingInfo: true, description: 'Branch setup and operating cost details are not available.' },
+  customer: { assumptionLabel: 'Share of monthly revenue lost', assumption: '20', suffix: '%', baselineKey: 'revenue', description: 'Enter the share of monthly revenue represented by this customer. The engine applies it as lost revenue.' },
+  competitor: { assumptionLabel: 'Estimated monthly sales decrease', assumption: '10', suffix: '%', assumptionKey: 'competitor_sales_decrease_percent', baselineKey: 'revenue', description: 'Enter the estimated percentage decrease in monthly sales after a competitor enters.' },
+  interest: { assumptionLabel: 'Annual interest rate increase', assumption: '1', suffix: 'percentage points', assumptionKey: 'interest_rate_increase_percentage_points', secondaryLabel: 'Outstanding loan balance', secondaryValue: '', secondaryKey: 'outstanding_loan_balance', prefix: undefined, description: 'The engine converts the annual rate increase into an estimated monthly interest cost.' },
+  branch: { assumptionLabel: 'New branch monthly operating cost', assumption: '', prefix: 'RM', assumptionKey: 'new_branch_monthly_cost', description: 'Enter the new branch’s estimated recurring monthly operating cost.' },
 }
 
 const monthlyVariableCatalog = [
@@ -38,6 +38,7 @@ export default function Simulator() {
   const [selected, setSelected] = useState('supplier')
   const [step, setStep] = useState<'choose' | 'assumptions'>('choose')
   const [assumption, setAssumption] = useState(templates.supplier.assumption)
+  const [secondaryAssumption, setSecondaryAssumption] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const [customEvent, setCustomEvent] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
@@ -145,18 +146,26 @@ export default function Simulator() {
   }
 
   const runTemplateScenario = async () => {
-    if (!confirmed || busy || !business || !['supplier', 'sales'].includes(selected)) return
+    if (!confirmed || busy || !business || !['supplier', 'sales', 'customer', 'competitor', 'interest', 'branch'].includes(selected)) return
     const value = Number(assumption)
     if (!Number.isFinite(value) || value < 0) return
     setBusy(true)
     setApiError('')
     try {
-      const supplierEvent = selected === 'supplier'
+      const eventConfig: Record<string, { eventType: string; key: string }> = {
+        supplier: { eventType: 'supplier_price_increase', key: 'supplier_cost_increase_percent' },
+        sales: { eventType: 'sales_decrease', key: 'sales_decrease_percent' },
+        customer: { eventType: 'major_customer_loss', key: 'customer_revenue_share_percent' },
+        competitor: { eventType: 'new_competitor', key: 'competitor_sales_decrease_percent' },
+        interest: { eventType: 'interest_rate_increase', key: 'interest_rate_increase_percentage_points' },
+        branch: { eventType: 'new_branch', key: 'new_branch_monthly_cost' },
+      }
+      const config = eventConfig[selected]
       const scenarioInput: ScenarioInput = {
-        title: `${active.title} by ${value}%`,
-        event_type: supplierEvent ? 'supplier_price_increase' : 'sales_decrease',
-        description: `${active.title} by ${value}%.`,
-        assumptions: { [supplierEvent ? 'supplier_cost_increase_percent' : 'sales_decrease_percent']: value },
+        title: `${active.title} · ${activeTemplate.assumptionLabel}: ${value}${activeTemplate.suffix ?? ''}`,
+        event_type: config.eventType,
+        description: `${active.title}: ${value}${activeTemplate.suffix ?? ''}${activeTemplate.secondaryLabel ? `, ${activeTemplate.secondaryLabel}: ${secondaryAssumption}` : ''}.`,
+        assumptions: { [config.key]: value, ...(activeTemplate.secondaryKey ? { [activeTemplate.secondaryKey]: Number(secondaryAssumption) } : {}) },
         missing_information: [],
       }
       const calculation = await simulateDemoScenario(business.id, scenarioInput, business)
@@ -174,6 +183,7 @@ export default function Simulator() {
     setSelected(id)
     setAssumption(templates[id].assumption)
     setConfirmed(false)
+    setSecondaryAssumption(templates[id].secondaryValue ?? '')
     setStep('choose')
   }
 
@@ -235,12 +245,11 @@ export default function Simulator() {
             <div className="assumption-heading"><span className="event-icon large-event-icon"><Icon size={19} /></span><div><div className="eyebrow">SELECTED EVENT</div><h2>{active.title}</h2><p>{active.description}</p></div></div>
             <div className="assumption-form"><Field label={activeTemplate.assumptionLabel} type="number" value={assumption} prefix={activeTemplate.prefix} suffix={activeTemplate.suffix} onChange={(value) => { setAssumption(value); setConfirmed(false) }} help={activeTemplate.description} />
               {activeTemplate.baselineKey && <div className="baseline-reference"><div><span>Business baseline</span><strong>{activeTemplate.baselineKey === 'revenue' ? `Monthly revenue · ${money(Number(business.monthly_revenue))}` : `Monthly supplier costs · ${money(Number(business.supplier_costs))}`}</strong></div><span className="baseline-source">Current demo session</span></div>}
-              {activeTemplate.missingInfo && <div className="inline-notice">Some information needed for this scenario is not in the demo profile. This prototype will not fill in unknown values.</div>}
+              {activeTemplate.secondaryLabel && <Field label={activeTemplate.secondaryLabel} type="number" prefix="RM" value={secondaryAssumption} onChange={(value) => { setSecondaryAssumption(value); setConfirmed(false) }} help="Enter this value explicitly; it is not inferred from the demo profile." />}
             </div>
             <div className="confirmation-box"><label className="check-row"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span className="custom-check"><Check size={12} /></span><span><strong>I have reviewed this assumption</strong><small>Calculation uses your current in-memory demo financials.</small></span></label></div>
             {apiError && <div className="inline-error" role="alert">{apiError}</div>}
-            {!['supplier', 'sales'].includes(selected) && <div className="inline-notice">This predefined scenario is not supported by the current financial engine. Use a supported custom event to calculate an estimate.</div>}
-            <div className="sim-footer"><span><ChevronLeft size={14} /> Assumption review</span><Button disabled={!confirmed || !assumption || busy || !['supplier', 'sales'].includes(selected)} onClick={runTemplateScenario}>{busy ? 'Calculating…' : 'Confirm & calculate'} <ArrowRight size={15} /></Button></div>
+            <div className="sim-footer"><span><ChevronLeft size={14} /> Assumption review</span><Button disabled={!confirmed || !assumption || (Boolean(activeTemplate.secondaryKey) && !secondaryAssumption) || busy} onClick={runTemplateScenario}>{busy ? 'Calculating…' : 'Confirm & calculate'} <ArrowRight size={15} /></Button></div>
           </>}
         </Card>
       </div>

@@ -12,7 +12,7 @@ export type Business = {
   cash_balance: string
   inventory_value: string | null
   liabilities: string | null
-  custom_monthly_variables: { name: string; value: string }[]
+  custom_monthly_variables: { name: string; value: string; type?: 'revenue' | 'expense' }[]
 }
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string }

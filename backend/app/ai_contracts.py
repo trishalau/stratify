@@ -455,7 +455,7 @@ def validate_interpretation(raw: Any, user_text: str, custom_expense_names: list
     if len(questions) > 8:
         questions = questions[:8]
 
-    simulation_supported = event_type in {"supplier_price_increase", "sales_decrease", "expense_change"}
+    simulation_supported = event_type in {"supplier_price_increase", "sales_decrease", "expense_change", "major_customer_loss"}
     ready = simulation_supported and not missing and not (required_assumptions - set(assumptions)) and not (provided_alternatives and provided_alternatives != alternatives) and not invalid_alternatives
     return {
         "event_type": event_type,

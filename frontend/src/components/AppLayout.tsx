@@ -39,7 +39,7 @@ export default function AppLayout() {
       <div className="sidebar-footer">
         <NavLink to="/settings" onClick={() => setMenuOpen(false)} className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}><Settings2 size={17} /><span>Settings</span></NavLink>
         <button className="nav-link help-link"><CircleHelp size={17} /><span>Help center</span></button>
-        <div className="profile-row"><div className="profile-avatar">AR</div><div className="profile-copy"><strong>Alex Rahman</strong><span>Owner</span></div><button aria-label="Open profile menu" className="more-button">···</button></div>
+        <div className="profile-row"><div className="profile-avatar">AL</div><div className="profile-copy"><strong>Alex Lau</strong><span>Owner</span></div><button aria-label="Open profile menu" className="more-button">···</button></div>
       </div>
     </aside>
 
